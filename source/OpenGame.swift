@@ -377,12 +377,12 @@ struct CreateBottleSheet:View{
     @Environment(\.dismiss) var dismiss
     @State private var name=""
     @State private var renderer=Renderer.dxmt
-    @State private var engineFamily=EngineFamily.foss
+    private let engineFamily=EngineFamily.foss
     var body:some View{
         VStack(alignment:.leading,spacing:20){
             Text("新建独立容器").font(.title2.bold())
             TextField("例如：新游戏",text:$name).textFieldStyle(.roundedBorder)
-            Picker("运行核心",selection:$engineFamily){ForEach(EngineFamily.allCases,id:\.self){Text($0.label).tag($0)}}
+            LabeledContent("运行核心"){Text(engineFamily.label).foregroundStyle(.secondary)}
             Picker("图形后端",selection:$renderer){ForEach(Renderer.allCases,id:\.self){Text($0.label).tag($0)}}
             Text("默认使用 Wine FOSS 11 + MSync 与 DXMT 创建 Windows 10 兼容环境，同时支持 32 位和 64 位程序。每个容器有独立的游戏配置与存档。DirectX 12 与内核反作弊不在当前支持范围内。").font(.callout).foregroundStyle(.secondary)
             HStack{if model.busy{ProgressView().controlSize(.small);Text("正在初始化…")};Spacer();Button("取消"){dismiss()}.disabled(model.busy);Button("创建"){model.create(name:name,renderer:renderer,engineFamily:engineFamily){ok in if ok{dismiss()}}}.buttonStyle(.borderedProminent).disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || model.busy)}
