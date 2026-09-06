@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CryptoKit
 import Darwin
 
 enum OGError: LocalizedError {
@@ -27,6 +28,9 @@ struct Library: Codable {
 struct LaunchSpec {
     let executable: URL; let arguments: [String]; let directory: URL; let environment: [String:String]; let log: URL
 }
+struct RecipeStep:Codable {var file:String;var url:String;var sha256:String;var arguments:[String]}
+struct InstallRecipe:Codable,Identifiable {var id:String;var name:String;var summary:String;var steps:[RecipeStep]}
+struct RecipeCatalog:Codable {var schema:Int;var recipes:[InstallRecipe]}
 // Immutable service state; catalog writes use an advisory lock and atomic replacement.
 final class OpenGameCore: @unchecked Sendable {
     let root: URL
@@ -36,9 +40,19 @@ final class OpenGameCore: @unchecked Sendable {
     private var children:[Process]=[]
     private var watchers:[Process]=[]
     private var sessionSpecs:[String:LaunchSpec]=[:]
-    init(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/OpenGame")) { self.root = root }
+    init(root: URL? = nil) {
+        if let root=root {self.root=root}
+        else if let override=ProcessInfo.processInfo.environment["OPENGAME_ROOT"],override.hasPrefix("/") {self.root=URL(fileURLWithPath:override)}
+        else {self.root=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/OpenGame")}
+    }
     var catalog: URL { root.appendingPathComponent("library.json") }
     func path(_ part: String) -> URL { root.appendingPathComponent(part) }
+    var bundledRuntimeRoot: URL? {
+        guard let resources=Bundle.main.resourceURL else{return nil}
+        let candidate=resources.appendingPathComponent("Runtime")
+        return fm.fileExists(atPath:candidate.appendingPathComponent("Engines/WineFOSS11/bin/wine").path) ? candidate : nil
+    }
+    var activeRuntimeRoot: URL { bundledRuntimeRoot ?? root }
     // New installations start empty; existing catalogs are loaded unchanged.
     func initialLibrary() -> Library { Library(bottles:[],games:[]) }
     func load() throws -> Library {
@@ -80,9 +94,61 @@ final class OpenGameCore: @unchecked Sendable {
         return url
     }
     func runtime(_ b: Bottle) -> URL {
+        if b.engineFamily == .foss {
+            return activeRuntimeRoot.appendingPathComponent("Engines/WineFOSS11/bin/wine")
+        }
         let names:[Renderer:String]=[.wine:"WineHQ11",.dxvk:"WineHQ11-DXVK",.dxmt:"WineHQ11-DXMT"]
-        let name = b.engineFamily == .foss ? names[b.renderer]!.replacingOccurrences(of:"WineHQ11",with:"WineFOSS11") : names[b.renderer]!
-        return path("Engines/"+name+"/bin/wine")
+        return path("Engines/"+names[b.renderer]!+"/bin/wine")
+    }
+    func rendererPack(_ renderer:Renderer) -> URL? {
+        guard renderer != .wine else{return nil}
+        let bundled=activeRuntimeRoot.appendingPathComponent("RendererPacks/"+renderer.rawValue)
+        if fm.fileExists(atPath:bundled.path){return bundled}
+        let legacy=path("Engines/WineFOSS11-"+renderer.rawValue.uppercased()+"/lib/wine")
+        return fm.fileExists(atPath:legacy.path) ? legacy : nil
+    }
+    func runtimeStatus() -> String {
+        let source=bundledRuntimeRoot == nil ? "用户运行目录" : "OpenGame.app"
+        let wine=activeRuntimeRoot.appendingPathComponent("Engines/WineFOSS11/bin/wine")
+        guard fm.isExecutableFile(atPath:wine.path) else{return "未安装完整 Wine FOSS 运行核心"}
+        let renderers=[Renderer.dxmt,Renderer.dxvk].compactMap{rendererPack($0)==nil ? nil : $0.rawValue.uppercased()}.joined(separator:" / ")
+        let gst=activeRuntimeRoot.appendingPathComponent("Engines/Support/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0")
+        let bridge=activeRuntimeRoot.appendingPathComponent("Engines/WineFOSS11/lib/wine/x86_64-unix/winegstreamer.so")
+        let video=fm.fileExists(atPath:gst.path) && fm.fileExists(atPath:bridge.path) ? "Wine 视频桥接已启用" : "不含完整视频组件"
+        return "完整核心来自\(source) · \(renderers.isEmpty ? "无图形增量包" : renderers) · \(video)"
+    }
+    func availableRecipes() throws -> [InstallRecipe] {
+        guard let resource=Bundle.main.resourceURL?.appendingPathComponent("Recipes/catalog.json"),fm.fileExists(atPath:resource.path) else{throw OGError.message("安装配方未随应用提供。")}
+        let catalog=try JSONDecoder().decode(RecipeCatalog.self,from:Data(contentsOf:resource))
+        guard catalog.schema==1 else{throw OGError.message("不支持的安装配方版本。")}
+        return catalog.recipes
+    }
+    func installRecipe(_ recipe:InstallRecipe,in bottle:Bottle,progress:(String)->Void) throws {
+        try idleBottle(bottle)
+        let allowedHosts=Set(["cdn.akamai.steamstatic.com","aka.ms","download.microsoft.com"])
+        let downloads=path("Downloads/"+recipe.id);try fm.createDirectory(at:downloads,withIntermediateDirectories:true)
+        for (index,step) in recipe.steps.enumerated() {
+            guard let url=URL(string:step.url),url.scheme=="https",let host=url.host,allowedHosts.contains(host),URL(fileURLWithPath:step.file).lastPathComponent==step.file else{throw OGError.message("配方包含未授权的下载地址或文件名。")}
+            let target=downloads.appendingPathComponent(step.file)
+            progress("正在下载 \(recipe.name)（\(index+1)/\(recipe.steps.count)）…")
+            var data:Data
+            if let existing=try? Data(contentsOf:target),SHA256.hash(data:existing).map({String(format:"%02x",$0)}).joined()==step.sha256 {data=existing}
+            else {
+                data=try Data(contentsOf:url,options:.mappedIfSafe)
+                let digest=SHA256.hash(data:data).map{String(format:"%02x",$0)}.joined()
+                guard digest==step.sha256 else{throw OGError.message("\(step.file) 校验失败；官方文件可能已更新，请先更新 OpenGame 配方。")}
+                try data.write(to:target,options:.atomic)
+            }
+            guard PEIcon.isExecutable(data) else{throw OGError.message("下载的 \(step.file) 不是 Windows 可执行文件。")}
+            progress("正在安装 \(recipe.name)（\(index+1)/\(recipe.steps.count)）…")
+            let request=try spec(bottle:bottle,arguments:[target.path]+step.arguments,directory:downloads,logID:"recipe-\(bottle.id)-\(recipe.id)-\(index)")
+            let code=try wait(start(request),timeout:1800)
+            guard code==0 || code==194 else{throw OGError.message("\(recipe.name) 安装程序返回 \(code)，请查看日志。")}
+        }
+        let stamp=try prefix(bottle).appendingPathComponent(".opengame-dependencies/"+recipe.id+".json")
+        try fm.createDirectory(at:stamp.deletingLastPathComponent(),withIntermediateDirectories:true)
+        let record=["recipe":recipe.id,"installed_at":ISO8601DateFormatter().string(from:Date())]
+        try JSONSerialization.data(withJSONObject:record,options:[.prettyPrinted,.sortedKeys]).write(to:stamp,options:.atomic)
     }
     func environment(_ b: Bottle) throws -> [String:String] {
         var env=ProcessInfo.processInfo.environment
@@ -90,13 +156,74 @@ final class OpenGameCore: @unchecked Sendable {
         env["WINEPREFIX"]=try prefix(b).path;env["WINEDEBUG"]="-all"
         if b.engineFamily == .foss { env["WINEMSYNC"]="1" }
         env["WINEDLLOVERRIDES"]="winemenubuilder.exe="+(b.renderer == .wine ? "" : ";dxgi,d3d11,d3d10core=b")+(b.renderer == .dxmt ? ";winemetal=b" : "")
-        let gst=path("Engines/Support/GStreamer.framework/Versions/1.0")
+        let gst=activeRuntimeRoot.appendingPathComponent("Engines/Support/GStreamer.framework/Versions/1.0")
         env["GST_PLUGIN_PATH"]=gst.appendingPathComponent("lib/gstreamer-1.0").path
         env["GST_PLUGIN_SYSTEM_PATH"]=env["GST_PLUGIN_PATH"]
         env["DYLD_FALLBACK_LIBRARY_PATH"]=gst.appendingPathComponent("lib").path+":"+runtime(b).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("lib").path+":/usr/lib"
         env["MVK_CONFIG_LOG_LEVEL"]="1";env["DXVK_LOG_PATH"]=path("Logs").path
         env["DXMT_LOG_PATH"]=path("Logs").path
         return env
+    }
+    private func ensureRendererFiles(_ bottle:Bottle) throws {
+        guard bottle.engineFamily == .foss,bottle.renderer != .wine else{return}
+        guard let pack=rendererPack(bottle.renderer) else{throw OGError.message("尚未安装 \(bottle.renderer.rawValue.uppercased()) 图形增量包。")}
+        let prefixURL=try prefix(bottle)
+        let stamp=prefixURL.appendingPathComponent(".opengame-renderer")
+        let desired=bottle.renderer.rawValue+"\n"
+        if (try? String(contentsOf:stamp,encoding:.utf8))==desired{return}
+        let backup=prefixURL.appendingPathComponent(".opengame-renderer-backup")
+        for (arch,folder) in [("x86_64-windows","system32"),("i386-windows","syswow64")] {
+            for name in ["d3d10core.dll","d3d11.dll","dxgi.dll"] {
+                let source=pack.appendingPathComponent("\(arch)/\(name)")
+                guard fm.fileExists(atPath:source.path) else{throw OGError.message("图形增量包不完整：\(source.lastPathComponent)（\(arch)）")}
+                let target=prefixURL.appendingPathComponent("drive_c/windows/\(folder)/\(name)")
+                let saved=backup.appendingPathComponent("\(folder)/\(name)")
+                if !fm.fileExists(atPath:saved.path),fm.fileExists(atPath:target.path) {
+                    try fm.createDirectory(at:saved.deletingLastPathComponent(),withIntermediateDirectories:true)
+                    try fm.copyItem(at:target,to:saved)
+                }
+                try fm.createDirectory(at:target.deletingLastPathComponent(),withIntermediateDirectories:true)
+                let temporary=target.deletingLastPathComponent().appendingPathComponent(".\(name).opengame-\(UUID().uuidString)")
+                try fm.copyItem(at:source,to:temporary)
+                if fm.fileExists(atPath:target.path){try fm.removeItem(at:target)}
+                try fm.moveItem(at:temporary,to:target)
+            }
+        }
+        try desired.write(to:stamp,atomically:true,encoding:.utf8)
+    }
+    private func prepareBundledFonts(_ bottle:Bottle) throws -> Bool {
+        let source=activeRuntimeRoot.appendingPathComponent("Fonts/Liberation")
+        guard fm.fileExists(atPath:source.path) else{return false}
+        let destination=try prefix(bottle).appendingPathComponent("drive_c/windows/Fonts")
+        try fm.createDirectory(at:destination,withIntermediateDirectories:true)
+        for file in try fm.contentsOfDirectory(at:source,includingPropertiesForKeys:nil) where file.pathExtension.lowercased()=="ttf" {
+            let target=destination.appendingPathComponent(file.lastPathComponent)
+            if !fm.fileExists(atPath:target.path){try fm.copyItem(at:file,to:target)}
+        }
+        return true
+    }
+    private func registerBundledFonts(_ bottle:Bottle) throws {
+        guard try prepareBundledFonts(bottle) else{return}
+        let marker=try prefix(bottle).appendingPathComponent(".opengame-fonts")
+        guard !fm.fileExists(atPath:marker.path) else{return}
+        let registry=try prefix(bottle).appendingPathComponent("opengame-fonts.reg")
+        let content="""
+        REGEDIT4
+
+        [HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts]
+        "Liberation Sans (TrueType)"="LiberationSans-Regular.ttf"
+        "Liberation Serif (TrueType)"="LiberationSerif-Regular.ttf"
+        "Liberation Mono (TrueType)"="LiberationMono-Regular.ttf"
+
+        [HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes]
+        "Arial"="Liberation Sans"
+        "Times New Roman"="Liberation Serif"
+        "Courier New"="Liberation Mono"
+        """
+        try content.write(to:registry,atomically:true,encoding:.utf8)
+        let process=Process();process.executableURL=runtime(bottle);process.arguments=["regedit","/S",registry.path];process.environment=try environment(bottle);process.standardOutput=FileHandle.nullDevice;process.standardError=FileHandle.nullDevice
+        try process.run();guard try wait(process,timeout:30)==0 else{throw OGError.message("字体注册失败。")}
+        try? fm.removeItem(at:registry);try "Liberation 2.1.5\n".write(to:marker,atomically:true,encoding:.utf8)
     }
     // Steam updates restore its helper. After bootstrap, preserve the updated
     // Valve binary and install our parameter-only wrapper before restarting CEF.
@@ -152,6 +279,7 @@ final class OpenGameCore: @unchecked Sendable {
         guard fm.isExecutableFile(atPath:wine.path) else { throw OGError.message("未找到 Wine 运行库：\(wine.path)") }
         let prefixURL = try prefix(bottle)
         if initialized && !fm.fileExists(atPath:prefixURL.appendingPathComponent("system.reg").path) { throw OGError.message("容器尚未完成初始化。") }
+        if initialized {try ensureRendererFiles(bottle)}
         // Prefixes created before DXMT lack its Wine builtin module placeholder.
         // Register only the missing DXMT bridge; preserve existing game DLLs.
         if initialized && bottle.renderer == .dxmt {
@@ -441,6 +569,7 @@ final class OpenGameCore: @unchecked Sendable {
         let id=UUID().uuidString.lowercased();let b=Bottle(id:id,name:name,directory:"Prefixes/\(id)",renderer:renderer,engineFamily:engineFamily)
         let dir=try prefix(b);try fm.createDirectory(at:dir,withIntermediateDirectories:true)
         do {
+            _ = try prepareBundledFonts(b)
             let base=try spec(bottle:b,arguments:["wineboot","-u"],directory:dir,logID:"create-\(id)",initialized:false)
             var setupEnv=base.environment;setupEnv["WINEDLLOVERRIDES"]="winemenubuilder.exe=;mscoree,mshtml="
             let p=try start(LaunchSpec(executable:base.executable,arguments:base.arguments,directory:base.directory,environment:setupEnv,log:base.log))
@@ -449,6 +578,7 @@ final class OpenGameCore: @unchecked Sendable {
             let flushDeadline=Date().addingTimeInterval(15)
             while code==0 && !fm.fileExists(atPath:registry.path) && Date()<flushDeadline { Thread.sleep(forTimeInterval:0.1) }
             guard code==0 && fm.fileExists(atPath:dir.appendingPathComponent("system.reg").path) else { throw OGError.message("容器初始化失败（\(code)），日志已保留。") }
+            try registerBundledFonts(b)
             let users=dir.appendingPathComponent("drive_c/users")
             for user in (try? fm.contentsOfDirectory(at:users,includingPropertiesForKeys:nil)) ?? [] {
                 for entry in (try? fm.contentsOfDirectory(at:user,includingPropertiesForKeys:[.isSymbolicLinkKey])) ?? [] {
@@ -484,7 +614,7 @@ final class OpenGameCore: @unchecked Sendable {
         // Wait-only helper: never terminates the user's Wine server or games.
         let idle=Process();idle.executableURL=runtime(source).deletingLastPathComponent().appendingPathComponent("wineserver");idle.arguments=["-w"];idle.environment=try environment(source);idle.standardOutput=FileHandle.nullDevice;idle.standardError=FileHandle.nullDevice
         try idle.run()
-        do{guard try wait(idle,timeout:2)==0 else{throw OGError.message("无法确认容器状态。")}}
+        do{guard try wait(idle,timeout:8)==0 else{throw OGError.message("无法确认容器状态。")}}
         catch{throw OGError.message("请先退出此容器内的游戏、Steam 和 Wine 工具，稍后再复制。")}
         let id=UUID().uuidString.lowercased();let copied=Bottle(id:id,name:label,directory:"Prefixes/\(id)",renderer:source.renderer,engineFamily:source.engineFamily)
         let to=try prefix(copied)
@@ -500,6 +630,87 @@ final class OpenGameCore: @unchecked Sendable {
             lib.bottles.append(copied);lib.games.append(contentsOf:games)
         }
         return copied
+    }
+    private func idleBottle(_ bottle:Bottle) throws {
+        let idle=Process();idle.executableURL=runtime(bottle).deletingLastPathComponent().appendingPathComponent("wineserver");idle.arguments=["-w"];idle.environment=try environment(bottle);idle.standardOutput=FileHandle.nullDevice;idle.standardError=FileHandle.nullDevice
+        try idle.run()
+        do{guard try wait(idle,timeout:8)==0 else{throw OGError.message("无法确认容器状态。")}}
+        catch{throw OGError.message("请先退出此容器内的游戏、Steam 和 Wine 工具。")}
+    }
+    struct BottleArchiveManifest:Codable {
+        var schema=1;var exportedAt:Date;var originalPrefix:String;var bottle:Bottle;var games:[Game]
+    }
+    private func validateContainedSymlinks(in directory:URL) throws {
+        let base=directory.resolvingSymlinksInPath().standardizedFileURL.path
+        guard let entries=fm.enumerator(at:directory,includingPropertiesForKeys:[.isSymbolicLinkKey],options:[]) else{throw OGError.message("无法检查容器文件。")}
+        for case let entry as URL in entries {
+            guard (try entry.resourceValues(forKeys:[.isSymbolicLinkKey])).isSymbolicLink==true else{continue}
+            let target=try fm.destinationOfSymbolicLink(atPath:entry.path)
+            let parts=target.split(separator:"/",omittingEmptySubsequences:false)
+            guard !target.hasPrefix("/"),!parts.contains("..") else{throw OGError.message("容器包含指向外部位置的符号链接：\(entry.lastPathComponent)")}
+            let resolved=entry.resolvingSymlinksInPath().standardizedFileURL.path
+            guard resolved==base || resolved.hasPrefix(base+"/") else{throw OGError.message("容器包含越界符号链接：\(entry.lastPathComponent)")}
+        }
+    }
+    func exportBottle(_ bottle:Bottle,to archive:URL) throws {
+        guard archive.pathExtension.lowercased()=="opengamebottle" else{throw OGError.message("容器归档必须使用 .opengamebottle 扩展名。")}
+        try idleBottle(bottle)
+        let source=try prefix(bottle),lib=try load()
+        guard fm.fileExists(atPath:source.appendingPathComponent("system.reg").path) else{throw OGError.message("容器尚未初始化。")}
+        try validateContainedSymlinks(in:source)
+        let temporary=fm.temporaryDirectory.appendingPathComponent("OpenGameExport-"+UUID().uuidString)
+        defer{try? fm.removeItem(at:temporary)}
+        try fm.createDirectory(at:temporary,withIntermediateDirectories:true)
+        let payload=temporary.appendingPathComponent("Prefix")
+        let cp=Process();cp.executableURL=URL(fileURLWithPath:"/bin/cp");cp.arguments=["-cR",source.path,payload.path];cp.standardOutput=FileHandle.nullDevice;cp.standardError=FileHandle.nullDevice
+        try cp.run();guard try wait(cp,timeout:600)==0 else{throw OGError.message("复制容器内容失败。")}
+        let manifest=BottleArchiveManifest(exportedAt:Date(),originalPrefix:source.path,bottle:bottle,games:lib.games.filter{$0.bottleID==bottle.id})
+        let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(manifest).write(to:temporary.appendingPathComponent("manifest.json"),options:.atomic)
+        let out=archive.deletingLastPathComponent().appendingPathComponent("."+archive.lastPathComponent+".tmp")
+        try? fm.removeItem(at:out)
+        let ditto=Process();ditto.executableURL=URL(fileURLWithPath:"/usr/bin/ditto");ditto.arguments=["-c","-k","--sequesterRsrc",temporary.path,out.path];ditto.standardOutput=FileHandle.nullDevice;ditto.standardError=FileHandle.nullDevice
+        try ditto.run();guard try wait(ditto,timeout:900)==0 else{throw OGError.message("创建容器归档失败。")}
+        if fm.fileExists(atPath:archive.path){try fm.removeItem(at:archive)}
+        try fm.moveItem(at:out,to:archive)
+    }
+    func importBottle(from archive:URL,name:String?=nil) throws -> Bottle {
+        guard fm.fileExists(atPath:archive.path),archive.pathExtension.lowercased()=="opengamebottle" else{throw OGError.message("请选择有效的 .opengamebottle 文件。")}
+        let listingFile=fm.temporaryDirectory.appendingPathComponent("OpenGameListing-"+UUID().uuidString)
+        defer{try? fm.removeItem(at:listingFile)}
+        fm.createFile(atPath:listingFile.path,contents:nil)
+        let listingOutput=try FileHandle(forWritingTo:listingFile)
+        let listing=Process();listing.executableURL=URL(fileURLWithPath:"/usr/bin/zipinfo");listing.arguments=["-1",archive.path];listing.standardOutput=listingOutput;listing.standardError=FileHandle.nullDevice
+        try listing.run();let listingCode=try wait(listing,timeout:120);try listingOutput.close()
+        guard listingCode==0,let entries=String(data:try Data(contentsOf:listingFile),encoding:.utf8) else{throw OGError.message("无法读取容器归档。")}
+        for entry in entries.split(separator:"\n").map(String.init) {
+            guard !entry.hasPrefix("/"),!entry.split(separator:"/").contains("..") else{throw OGError.message("归档包含不安全路径，已拒绝导入。")}
+        }
+        let temporary=fm.temporaryDirectory.appendingPathComponent("OpenGameImport-"+UUID().uuidString)
+        defer{try? fm.removeItem(at:temporary)}
+        try fm.createDirectory(at:temporary,withIntermediateDirectories:true)
+        let ditto=Process();ditto.executableURL=URL(fileURLWithPath:"/usr/bin/ditto");ditto.arguments=["-x","-k",archive.path,temporary.path];ditto.standardOutput=FileHandle.nullDevice;ditto.standardError=FileHandle.nullDevice
+        try ditto.run();guard try wait(ditto,timeout:900)==0 else{throw OGError.message("解压容器归档失败。")}
+        try validateContainedSymlinks(in:temporary)
+        let decoder=JSONDecoder();decoder.dateDecodingStrategy = .iso8601
+        let manifest=try decoder.decode(BottleArchiveManifest.self,from:Data(contentsOf:temporary.appendingPathComponent("manifest.json")))
+        guard manifest.schema==1,fm.fileExists(atPath:temporary.appendingPathComponent("Prefix/system.reg").path) else{throw OGError.message("容器归档结构不完整。")}
+        let id=UUID().uuidString.lowercased(),label=(name ?? manifest.bottle.name).trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !label.isEmpty else{throw OGError.message("请输入容器名称。")}
+        let restored=Bottle(id:id,name:label,directory:"Prefixes/\(id)",renderer:manifest.bottle.renderer,engineFamily:manifest.bottle.engineFamily)
+        guard fm.isExecutableFile(atPath:runtime(restored).path) else{throw OGError.message("归档所需的运行核心尚未安装。")}
+        let destination=try prefix(restored),source=temporary.appendingPathComponent("Prefix")
+        let cp=Process();cp.executableURL=URL(fileURLWithPath:"/bin/cp");cp.arguments=["-cR",source.path,destination.path];cp.standardOutput=FileHandle.nullDevice;cp.standardError=FileHandle.nullDevice
+        try cp.run();guard try wait(cp,timeout:600)==0 else{throw OGError.message("恢复容器内容失败。")}
+        let oldPrefix=manifest.originalPrefix
+        func remap(_ value:String)->String {oldPrefix.isEmpty ? value : (value==oldPrefix || value.hasPrefix(oldPrefix+"/") ? destination.path+value.dropFirst(oldPrefix.count) : value)}
+        do {
+            try mutate{lib in
+                lib.bottles.append(restored)
+                lib.games.append(contentsOf:manifest.games.map{game in var g=game;g.id=UUID().uuidString.lowercased();g.bottleID=id;g.executable=remap(g.executable);g.workingDirectory=remap(g.workingDirectory);g.note="从容器归档恢复 · 待验证兼容性";return g})
+            }
+        } catch {try? fm.removeItem(at:destination);throw error}
+        return restored
     }
     func importGame(executable: URL,title: String,bottleID: String,arguments: [String]=[]) throws -> Game {
         guard executable.pathExtension.lowercased()=="exe",fm.fileExists(atPath:executable.path) else { throw OGError.message("请选择现有的 Windows EXE 游戏文件。") }

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "runtime": "Wine FOSS 11.0 / CodeWeavers 26.3.0 source",
+  "architecture": "x86_64-on-Apple-Silicon",
+  "minimum_macos": "14.0",
+  "components": {
+    "wine": "11.0 with MSync",
+    "dxmt": "0.80",
+    "dxvk": "1.10.3-compatible CrossOver FOSS build",
+    "gstreamer": "1.28.1 allowlisted playback runtime with Wine x86_64/i386 bridge",
+    "fonts": "Liberation Fonts 2.1.5"
+  },
+  "renderers": {
+    "wine": [],
+    "dxmt": ["d3d10core.dll", "d3d11.dll", "dxgi.dll"],
+    "dxvk": ["d3d10core.dll", "d3d11.dll", "dxgi.dll"]
+  },
+  "excluded": ["Steam", "games", "prefixes", "user data", "Microsoft fonts", "D3DMetal", "CrossOver proprietary recipes", "GStreamer GPL/restricted/DVD plugins"]
+}

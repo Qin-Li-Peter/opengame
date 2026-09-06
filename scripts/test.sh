@@ -6,3 +6,5 @@ xcrun swiftc -swift-version 5 -warnings-as-errors -parse-as-library source/OpenG
 build/catalog-tests
 xcrun swiftc -swift-version 5 -warnings-as-errors -parse-as-library source/OpenGameCore.swift tests/ShutdownTests.swift -framework AppKit -o build/shutdown-tests
 build/shutdown-tests
+xcrun swiftc -swift-version 5 -warnings-as-errors -parse-as-library source/OpenGameCore.swift tests/ArchiveTests.swift -framework AppKit -o build/archive-tests
+build/archive-tests

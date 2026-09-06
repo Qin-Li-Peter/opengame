@@ -16,7 +16,7 @@ import Foundation
         precondition(old.bottles.count==1 && old.bottles[0].engineFamily==nil)
         precondition(core.runtime(old.bottles[0]).path.hasSuffix("WineHQ11-DXVK/bin/wine"))
         var current=old.bottles[0];current.engineFamily = .foss;current.renderer = .dxmt
-        precondition(core.runtime(current).path.hasSuffix("WineFOSS11-DXMT/bin/wine"))
+        precondition(core.runtime(current).path.hasSuffix("WineFOSS11/bin/wine"))
         let env=try core.environment(current)
         precondition(env["WINEMSYNC"]=="1")
         try core.mutate { $0.bottles.append(current) }

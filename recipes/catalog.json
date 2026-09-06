@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "recipes": [
+    {
+      "id": "steam",
+      "name": "Steam",
+      "summary": "从 Valve 官方服务器下载并启动 Steam 安装程序。",
+      "steps": [
+        {
+          "file": "SteamSetup.exe",
+          "url": "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe",
+          "sha256": "7d3654531c32d941b8cae81c4137fc542172bfa9635f169cb392f245a0a12bcb",
+          "arguments": []
+        }
+      ]
+    },
+    {
+      "id": "vcrun-2015-2026",
+      "name": "Microsoft Visual C++ 运行库 2015–2026",
+      "summary": "从 Microsoft 官方链接安装 32 位和 64 位 VC++ v14 运行库。",
+      "steps": [
+        {
+          "file": "vc_redist.x86.exe",
+          "url": "https://aka.ms/vc14/vc_redist.x86.exe",
+          "sha256": "f0bab33a302b3cdb2e11113760d016f54fd3d2632c65ba7834fac4f0abd7f1a3",
+          "arguments": ["/install", "/quiet", "/norestart"]
+        },
+        {
+          "file": "vc_redist.x64.exe",
+          "url": "https://aka.ms/vc14/vc_redist.x64.exe",
+          "sha256": "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c",
+          "arguments": ["/install", "/quiet", "/norestart"]
+        }
+      ]
+    },
+    {
+      "id": "dotnet48",
+      "name": ".NET Framework 4.8",
+      "summary": "从 Microsoft 下载英文离线安装程序；部分游戏仍可能需要单独兼容设置。",
+      "steps": [
+        {
+          "file": "NDP48-x86-x64-AllOS-ENU.exe",
+          "url": "https://download.microsoft.com/download/f/3/a/f3a6af84-da23-40a5-8d1c-49cc10c8e76f/NDP48-x86-x64-AllOS-ENU.exe",
+          "sha256": "0a3a390c47e639d0f7fc65b21195fee6b7f65b066f80f70c60fab191d14b7e40",
+          "arguments": ["/q", "/norestart"]
+        }
+      ]
+    }
+  ]
+}

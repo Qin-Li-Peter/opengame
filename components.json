@@ -1,5 +1,68 @@
 [
   {
+    "kind": "source",
+    "file": "crossover-sources-26.3.0.tar.gz",
+    "url": "https://media.codeweavers.com/pub/crossover/source/crossover-sources-26.3.0.tar.gz",
+    "sha256": "ac99c8ca4b3848f3e81784135f023df266b61c2345726ea55a50b3e030dd6872",
+    "license": "component-specific; includes Wine LGPL-2.1-or-later"
+  },
+  {
+    "kind": "source",
+    "file": "dxmt-v0.80-source.tar.gz",
+    "url": "https://github.com/3Shain/dxmt/archive/refs/tags/v0.80.tar.gz",
+    "sha256": "79cd3a2b32749fc3890b6c2a9337f45de26fdb750014f3457bb7ebafa679492d",
+    "license": "MIT for v0.80"
+  },
+  {
+    "kind": "source",
+    "file": "gstreamer-1.28.1-source.tar.gz",
+    "url": "https://gitlab.freedesktop.org/gstreamer/gstreamer/-/archive/1.28.1/gstreamer-1.28.1.tar.gz",
+    "sha256": "97fee2ed866d087cd0f0cecbb3b955d18145bda22c8ae4d3a04603c6a055e8a6",
+    "license": "LGPL-2.1-or-later; plugin exceptions vary"
+  },
+  {
+    "kind": "source",
+    "file": "openh264-2.6.0-source.tar.gz",
+    "url": "https://github.com/cisco/openh264/archive/refs/tags/v2.6.0.tar.gz",
+    "sha256": "558544ad358283a7ab2930d69a9ceddf913f4a51ee9bf1bfb9e377322af81a69",
+    "license": "BSD-2-Clause"
+  },
+  {
+    "kind": "build-dependency",
+    "file": "gstreamer-1.0-1.28.1-universal.pkg",
+    "url": "https://gstreamer.freedesktop.org/data/pkg/osx/1.28.1/gstreamer-1.0-1.28.1-universal.pkg",
+    "sha256": "02803f73435daabe8fb12b79c38c6775d0efb83af001474558ba25c4f874d305",
+    "license": "official GStreamer macOS runtime package; binaries are staged into the audited runtime"
+  },
+  {
+    "kind": "build-dependency",
+    "file": "gstreamer-1.0-devel-1.28.1-universal.pkg",
+    "url": "https://gstreamer.freedesktop.org/data/pkg/osx/1.28.1/gstreamer-1.0-devel-1.28.1-universal.pkg",
+    "sha256": "df167b41559afbcd743276c6b068cba2ada8f5b69eb68095415a7a5a7515e52c",
+    "license": "official GStreamer macOS development SDK; not redistributed in the corresponding-source archive"
+  },
+  {
+    "kind": "source",
+    "file": "macports-wine-287ccc0-source.tar.gz",
+    "url": "https://github.com/Gcenx/macports-wine/archive/287ccc08e3dc3585d7f64045088ad0c83b01d6f3.tar.gz",
+    "sha256": "86c3a932df2af7afb91857082e5883ca2d6202cbd1300b4f0bd8812a7a78880e",
+    "license": "build recipes and dependency provenance"
+  },
+  {
+    "kind": "source",
+    "file": "macos-wine-builds-5fca03f-source.tar.gz",
+    "url": "https://github.com/Gcenx/macOS_Wine_builds/archive/5fca03f999e04902289561b56ddfbcaa7848f2cd.tar.gz",
+    "sha256": "9533a37cb85d85faf0c6441a880bc92b8010a5e7f7955ce737289a46b0245c29",
+    "license": "build configuration and dependency provenance"
+  },
+  {
+    "kind": "source",
+    "file": "liberation-fonts-ttf-2.1.5.tar.gz",
+    "url": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+    "sha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "license": "SIL Open Font License 1.1"
+  },
+  {
     "file": "wine-stable-11.0_1-osx64.tar.xz",
     "url": "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.0_1/wine-stable-11.0_1-osx64.tar.xz",
     "sha256": "b50dc50ec7f41d58b115a6b685d4d1315ba3c797bd3aa0f49213f2703cb82388",

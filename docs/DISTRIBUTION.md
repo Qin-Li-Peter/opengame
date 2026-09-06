@@ -2,7 +2,7 @@
 
 推荐使用 GitHub Actions 自动编译，再将通过验收的安装包放到 GitHub Release。Actions 的 artifact 是暂存构建产物，Release 是版本下载入口；两者不是同一个东西。
 
-本仓库目前构建的是 `OpenGame-0.4.1-launcher-preview-macos-arm64.zip`，仅适合已经配置引擎的开发环境。它有校验和，但不是含运行引擎的独立安装包。
+默认 `build.yml` 构建启动器预览；`release.yml` 构建包含运行核心的完整 APP。后者要求一个已审计且哈希固定的运行时包，并要求 Developer ID 和 Apple 公证凭据。
 
 ## 私有仓库
 
@@ -17,6 +17,6 @@
 - 补齐 Developer ID 签名和公证，并实际验证下载后启动。
 - 以 Pre-release 发布首批内测版，写明支持的 Mac、已测游戏和已知问题；包含安装包、SHA256SUMS、变更说明，以及对应源码材料。
 
-当前已完成源码分离、空游戏库初始化、启动器构建和包校验；不声称已经完成上述全部条件。不要上传整个 `Application Support/OpenGame`，其中可能有账号、游戏和存档。
+当前已完成去重运行时打包、绝对依赖修复、对应源码包、配方、容器迁移和干净 HOME 验收。Apple 凭据和第二台干净实体 Mac 验收仍需仓库所有者完成。不要上传整个 `Application Support/OpenGame`，其中可能有账号、游戏和存档；`package-full.sh` 只选择 `Engines` 中的白名单文件并执行审计。
 
 参考：[GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)、[GNU LGPL 2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)、[Apple 分发与公证](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。

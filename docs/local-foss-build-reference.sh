@@ -4,7 +4,8 @@
 # It does not replace any installed OpenGame runtime or CrossOver component.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
-workspace="$(cd "$here/../../.." && pwd)"
+repository="$(cd "$here/.." && pwd)"
+workspace="${OG_BUILD_WORKSPACE:-$repository}"
 cd "$workspace"
 python3 - <<'PY'
 from pathlib import Path
@@ -37,19 +38,27 @@ link=dest/'libgnutls.dylib'
 if link.exists() or link.is_symlink():link.unlink()
 link.symlink_to(tls.name)
 PY
+gst_sdk="$workspace/work/gst-sdk-1.28.1"
+test -f "$gst_sdk/lib/pkgconfig/gstreamer-1.0.pc" || { echo "Missing merged GStreamer 1.28.1 SDK: $gst_sdk" >&2; exit 1; }
 export PATH="$workspace/work/toolchains/llvm-mingw-20260826-ucrt-macos-universal/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-mkdir -p work/cx-wine-build
-cd work/cx-wine-build
+export PKG_CONFIG=/opt/homebrew/bin/pkg-config
+export PKG_CONFIG_PATH="$gst_sdk/lib/pkgconfig"
+mkdir -p work/cx-wine-gst-build
+cd work/cx-wine-gst-build
 ../crossover-foss/sources/wine/configure \
  --host=x86_64-apple-darwin --enable-archs=x86_64,i386 --with-mingw=llvm-mingw \
- --without-x --disable-tests --prefix="$workspace/work/cx-wine-stage" \
+ --without-x --disable-tests --prefix="$workspace/work/cx-wine-gst-stage" \
  CC='/usr/bin/clang -arch x86_64' CXX='/usr/bin/clang++ -arch x86_64' \
  OBJC='/usr/bin/clang -arch x86_64' BISON=/opt/homebrew/opt/bison/bin/bison \
  GNUTLS_CFLAGS="-I$workspace/work/cx-deps/include" \
  GNUTLS_LIBS="-L$workspace/work/cx-deps/lib -lgnutls" \
  FREETYPE_CFLAGS='-I/opt/homebrew/include/freetype2' \
  FREETYPE_LIBS="-L$workspace/work/cx-deps/lib -lfreetype" \
- LDFLAGS="-L$workspace/work/cx-deps/lib -Wl,-rpath,$workspace/work/cx-deps/lib -Wl,-headerpad_max_install_names" \
- > ../cx-wine-configure.log 2>&1
-make -j6 >> ../cx-wine-build.log 2>&1
-make -j6 install >> ../cx-wine-install.log 2>&1
+ LDFLAGS="-L$workspace/work/cx-deps/lib -L$gst_sdk/lib -Wl,-rpath,$workspace/work/cx-deps/lib -Wl,-rpath,$gst_sdk/lib -Wl,-headerpad_max_install_names" \
+ > ../cx-wine-gst-configure.log 2>&1
+grep 'gst_pad_new in -lgstreamer-1.0... yes' ../cx-wine-gst-configure.log
+make -j6 >> ../cx-wine-gst-build.log 2>&1
+make -j6 install >> ../cx-wine-gst-install.log 2>&1
+test -f "$workspace/work/cx-wine-gst-stage/lib/wine/x86_64-unix/winegstreamer.so"
+test -f "$workspace/work/cx-wine-gst-stage/lib/wine/x86_64-windows/winegstreamer.dll"
+test -f "$workspace/work/cx-wine-gst-stage/lib/wine/i386-windows/winegstreamer.dll"

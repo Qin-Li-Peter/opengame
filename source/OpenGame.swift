@@ -9,10 +9,11 @@ import UniformTypeIdentifiers
     @Published var error:String?
     @Published var busy=false
     @Published var isQuitting=false
+    @Published var runtimeStatus="正在检查运行核心…"
     private var processes:[Process]=[]
     private var launching=Set<String>()
     init(){core.resumeLaunches();reload()}
-    func reload(){do{try core.ensureCatalog();library=try core.load()}catch{self.error=error.localizedDescription}}
+    func reload(){do{try core.ensureCatalog();library=try core.load();runtimeStatus=core.runtimeStatus()}catch{self.error=error.localizedDescription}}
     func perform(_ action:()throws->Void){do{try action();reload()}catch{self.error=error.localizedDescription}}
     func start(_ spec:LaunchSpec){guard !isQuitting else{return};do{
         let p=try core.start(spec);processes.removeAll{!$0.isRunning};processes.append(p)
@@ -66,6 +67,27 @@ import UniformTypeIdentifiers
         DispatchQueue.global(qos:.userInitiated).async{
             let result=Result{try service.copyBottle(b,name:name)}
             DispatchQueue.main.async{self.busy=false;switch result{case .success(let copied):self.reload();self.status="容器“\(copied.name)”已复制。";done(true);case .failure(let e):self.error=e.localizedDescription;done(false)}}
+        }
+    }
+    func exportBottle(_ bottle:Bottle,to url:URL){
+        busy=true;status="正在归档容器“\(bottle.name)”…";let service=core
+        DispatchQueue.global(qos:.userInitiated).async{
+            let result=Result{try service.exportBottle(bottle,to:url)}
+            DispatchQueue.main.async{self.busy=false;switch result{case .success:self.status="容器已归档到 \(url.lastPathComponent)。";case .failure(let error):self.error=error.localizedDescription}}
+        }
+    }
+    func importBottle(from url:URL){
+        busy=true;status="正在验证并恢复容器归档…";let service=core
+        DispatchQueue.global(qos:.userInitiated).async{
+            let result=Result{try service.importBottle(from:url)}
+            DispatchQueue.main.async{self.busy=false;switch result{case .success(let bottle):self.reload();self.status="容器“\(bottle.name)”已恢复。";case .failure(let error):self.error=error.localizedDescription}}
+        }
+    }
+    func installRecipe(_ recipe:InstallRecipe,in bottle:Bottle,done:@escaping(Bool)->Void){
+        busy=true;status="正在准备 \(recipe.name)…";let service=core
+        DispatchQueue.global(qos:.userInitiated).async{
+            let result=Result{try service.installRecipe(recipe,in:bottle){message in DispatchQueue.main.async{self.status=message}}}
+            DispatchQueue.main.async{self.busy=false;switch result{case .success:self.status="\(recipe.name) 已安装到“\(bottle.name)”。";done(true);case .failure(let error):self.error=error.localizedDescription;done(false)}}
         }
     }
     func requestQuit(_ reply:@escaping(Bool)->Void) {
@@ -161,6 +183,7 @@ struct ContentView:View{
     @State private var search=""
     @State private var showImport=false
     @State private var showInstall=false
+    @State private var showRecipes=false
     @State private var showCreate=false
     @State private var editGame:Game?
     @State private var editBottle:Bottle?
@@ -174,6 +197,14 @@ struct ContentView:View{
         let available=model.library.bottles.filter{b in (try? model.core.prefix(b).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")).map{FileManager.default.fileExists(atPath:$0.path)} ?? false}
         guard let b=available.first(where:{$0.id==selectedBottle}) ?? available.first else{model.error="尚未找到 Steam。请先在一个容器中运行 Steam 安装程序。";return}
         do{let file=try model.core.prefix(b).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe");model.start(try model.core.spec(bottle:b,arguments:[file.path],directory:file.deletingLastPathComponent(),logID:"steam-\(b.id)"))}catch{model.error=error.localizedDescription}
+    }
+    func exportBottle(_ bottle:Bottle){
+        let panel=NSSavePanel();panel.nameFieldStringValue=bottle.name+".opengamebottle";panel.canCreateDirectories=true
+        panel.begin{response in guard response == .OK,var url=panel.url else{return};if url.pathExtension.lowercased() != "opengamebottle"{url.appendPathExtension("opengamebottle")};model.exportBottle(bottle,to:url)}
+    }
+    func importBottle(){
+        let panel=NSOpenPanel();panel.canChooseDirectories=false;panel.allowsMultipleSelection=false;panel.allowedContentTypes=[UTType(filenameExtension:"opengamebottle") ?? .data]
+        panel.begin{response in if response == .OK,let url=panel.url{model.importBottle(from:url)}}
     }
     var body:some View{
         NavigationSplitView{
@@ -198,15 +229,19 @@ struct ContentView:View{
                     Spacer()
                     Button("添加游戏",systemImage:"plus.app"){showImport=true}.controlSize(.large)
                     Button("运行安装程序",systemImage:"square.and.arrow.down"){showInstall=true}.controlSize(.large)
+                    Button("安装组件",systemImage:"shippingbox.and.arrow.backward"){showRecipes=true}.controlSize(.large)
                 }.padding(24)
                 HStack{
                     TextField("搜索游戏",text:$search).textFieldStyle(.roundedBorder).frame(maxWidth:300)
                     Spacer()
                     Menu("容器工具"){
+                        Button("导入容器归档…",systemImage:"square.and.arrow.down.on.square"){importBottle()}.disabled(model.busy)
+                        Divider()
                         ForEach(model.library.bottles){b in
                             Menu(b.name){
                                 Button("容器设置与图形后端"){editBottle=b}
                                 Button("复制容器"){copySource=b}.disabled(model.busy)
+                                Button("导出容器归档…"){exportBottle(b)}.disabled(model.busy)
                                 Button("打开 C: 盘"){model.perform{model.show(try model.core.prefix(b).appendingPathComponent("drive_c"))}}
                                 Button("Wine 配置"){model.runTool(b,"winecfg")}
                                 Button("游戏控制器"){model.runTool(b,"controllers")}
@@ -265,12 +300,13 @@ struct ContentView:View{
                         Button("运行",systemImage:"play.fill"){model.launch(game)}.buttonStyle(.borderedProminent).controlSize(.large)
                     }.padding(18)
                 }else{Text("新游戏的兼容性需要分别验证；不支持的反作弊或图形接口可能阻止运行。").font(.caption).foregroundStyle(.secondary).padding(18)}
-                HStack{if model.busy{ProgressView().controlSize(.small)};Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(2);Spacer()}.padding(.horizontal,18).padding(.bottom,12)
+                HStack{if model.busy{ProgressView().controlSize(.small)};VStack(alignment:.leading,spacing:2){Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(2);Text(model.runtimeStatus).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)};Spacer()}.padding(.horizontal,18).padding(.bottom,12)
             }.background(Color(nsColor:.windowBackgroundColor))
         }
         .sheet(isPresented:$showImport){GameEditor(bottleID:preferredBottle)}
         .sheet(item:$editGame){game in GameEditor(bottleID:game.bottleID,existing:game)}
         .sheet(isPresented:$showInstall){InstallerSheet(bottleID:preferredBottle)}
+        .sheet(isPresented:$showRecipes){RecipeSheet(bottleID:preferredBottle)}
         .sheet(isPresented:$showCreate){CreateBottleSheet()}
         .sheet(item:$editBottle){b in BottleEditor(bottle:b)}
         .sheet(item:$copySource){b in CopyBottleSheet(source:b)}
@@ -278,6 +314,27 @@ struct ContentView:View{
         .onReceive(NotificationCenter.default.publisher(for:NSApplication.didBecomeActiveNotification)){_ in model.reload()}
         .onChange(of:selectedBottle){selectedGame=nil}
     }
+}
+
+struct RecipeSheet:View{
+    @EnvironmentObject var model:AppModel
+    @Environment(\.dismiss) var dismiss
+    @State var bottleID:String
+    @State private var recipes:[InstallRecipe]=[]
+    @State private var selected=""
+    @State private var message:String?
+    var body:some View{
+        VStack(alignment:.leading,spacing:18){
+            Text("安装常用组件").font(.title2.bold())
+            Picker("安装到容器",selection:$bottleID){ForEach(model.library.bottles){Text($0.name).tag($0.id)}}
+            List(recipes,selection:$selected){recipe in VStack(alignment:.leading,spacing:4){Text(recipe.name).font(.headline);Text(recipe.summary).font(.caption).foregroundStyle(.secondary)}.padding(.vertical,5).tag(recipe.id)}.frame(height:220)
+            Text("OpenGame 只从配方列出的官方 HTTPS 地址下载，并在运行前校验 SHA-256。若厂商更新文件，旧配方会安全失败，等待 OpenGame 更新校验值。组件许可由对应厂商提供。").font(.callout).foregroundStyle(.secondary)
+            if let message=message{Text(message).foregroundStyle(.red)}
+            HStack{if model.busy{ProgressView().controlSize(.small)};Spacer();Button("取消"){dismiss()}.disabled(model.busy);Button("下载并安装"){install()}.buttonStyle(.borderedProminent).disabled(selected.isEmpty || model.busy)}
+        }.padding(26).frame(width:610)
+        .onAppear{do{recipes=try model.core.availableRecipes();selected=recipes.first?.id ?? ""}catch{message=error.localizedDescription}}
+    }
+    func install(){guard let recipe=recipes.first(where:{$0.id==selected}),let bottle=model.library.bottles.first(where:{$0.id==bottleID}) else{return};model.installRecipe(recipe,in:bottle){ok in if ok{dismiss()}}}
 }
 
 struct BottleEditor:View{

@@ -14,6 +14,19 @@ import Foundation
    case "copy":
     guard args.count==3 else{throw OGError.message("copy BOTTLE_ID NAME")}
     print(try core.copyBottle(bottle(args[1]),name:args[2]).id)
+   case "export-bottle":
+    guard args.count==3 else{throw OGError.message("export-bottle BOTTLE_ID OUTPUT.opengamebottle")}
+    try core.exportBottle(bottle(args[1]),to:URL(fileURLWithPath:args[2]));print(args[2])
+   case "import-bottle":
+    guard args.count==2 || args.count==3 else{throw OGError.message("import-bottle ARCHIVE.opengamebottle [NAME]")}
+    print(try core.importBottle(from:URL(fileURLWithPath:args[1]),name:args.count==3 ? args[2] : nil).id)
+   case "runtime-status":
+    print(core.runtimeStatus())
+   case "recipes":
+    for recipe in try core.availableRecipes(){print("\(recipe.id)\t\(recipe.name)\t\(recipe.summary)")}
+   case "install-recipe":
+    guard args.count==3,let recipe=try core.availableRecipes().first(where:{$0.id==args[2]}) else{throw OGError.message("install-recipe BOTTLE_ID RECIPE_ID")}
+    try core.installRecipe(recipe,in:bottle(args[1])){print($0)};print("installed")
    case "renderer":
     guard args.count==3,let renderer=Renderer(rawValue:args[2]) else{throw OGError.message("renderer BOTTLE_ID wine|dxvk|dxmt")}
     var b=try bottle(args[1]);b.renderer=renderer;try core.updateBottle(b);print(renderer.rawValue)

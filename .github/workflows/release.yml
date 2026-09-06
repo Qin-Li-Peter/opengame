@@ -1,0 +1,95 @@
+name: Build signed full release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing tag to publish, for example v0.5.0
+        required: true
+      runtime_url:
+        description: HTTPS URL of the audited OpenGame runtime tar.xz
+        required: true
+      runtime_sha256:
+        description: SHA-256 of the runtime tar.xz
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      OG_CODESIGN_IDENTITY: Developer ID Application
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.version }}
+      - name: Require release credentials
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          test -n "$CERTIFICATE_P12_BASE64"
+          test -n "$CERTIFICATE_PASSWORD"
+          test -n "$APPLE_API_KEY_BASE64"
+          test -n "$APPLE_API_KEY_ID"
+          test -n "$APPLE_API_ISSUER_ID"
+      - name: Install pinned cross compiler
+        run: |
+          curl --fail --location --retry 3 https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-macos-universal.tar.xz -o "$RUNNER_TEMP/llvm-mingw.tar.xz"
+          echo '48bedd161f14ae25a3646cb750b57ee3188e97e34bd3c52240c1810aa74d6a7f  '"$RUNNER_TEMP/llvm-mingw.tar.xz" | shasum -a 256 -c -
+          tar -xf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C "$RUNNER_TEMP"
+          echo "OG_MINGW_CC=$RUNNER_TEMP/llvm-mingw-20260826-ucrt-macos-universal/bin/x86_64-w64-mingw32-gcc" >> "$GITHUB_ENV"
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password=$(openssl rand -hex 24)
+          echo "$CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+      - name: Build app and attach audited runtime
+        env:
+          RUNTIME_URL: ${{ inputs.runtime_url }}
+          RUNTIME_SHA256: ${{ inputs.runtime_sha256 }}
+        run: |
+          scripts/test.sh
+          scripts/build.sh
+          curl --fail --location --retry 3 "$RUNTIME_URL" -o "$RUNNER_TEMP/runtime.tar.xz"
+          echo "$RUNTIME_SHA256  $RUNNER_TEMP/runtime.tar.xz" | shasum -a 256 -c -
+          tar -xf "$RUNNER_TEMP/runtime.tar.xz" -C build/OpenGame.app/Contents/Resources
+          scripts/audit-runtime.py build/OpenGame.app/Contents/Resources/Runtime
+          scripts/sign-app.sh build/OpenGame.app "$OG_CODESIGN_IDENTITY"
+          scripts/test-fresh-install.sh build/OpenGame.app
+      - name: Package and notarize
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          mkdir -p dist/OpenGame-${{ inputs.version }}-macos-arm64
+          ditto build/OpenGame.app dist/OpenGame-${{ inputs.version }}-macos-arm64/OpenGame.app
+          ditto -c -k --sequesterRsrc --keepParent dist/OpenGame-${{ inputs.version }}-macos-arm64 dist/OpenGame-${{ inputs.version }}-macos-arm64.zip
+          echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool submit dist/OpenGame-${{ inputs.version }}-macos-arm64.zip --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait
+          xcrun stapler staple dist/OpenGame-${{ inputs.version }}-macos-arm64/OpenGame.app
+          ditto -c -k --sequesterRsrc --keepParent dist/OpenGame-${{ inputs.version }}-macos-arm64 dist/OpenGame-${{ inputs.version }}-macos-arm64.zip
+          scripts/fetch-sources.sh "$RUNNER_TEMP/sources"
+          mkdir -p dist/OpenGame-${{ inputs.version }}-corresponding-source/upstream
+          git archive --format=tar HEAD | tar -xf - -C dist/OpenGame-${{ inputs.version }}-corresponding-source
+          find "$RUNNER_TEMP/sources" -maxdepth 1 -type f -exec cp {} dist/OpenGame-${{ inputs.version }}-corresponding-source/upstream/ \;
+          cp -R "$RUNNER_TEMP/sources/gstreamer-subprojects" dist/OpenGame-${{ inputs.version }}-corresponding-source/upstream/
+          tar -cJf dist/OpenGame-${{ inputs.version }}-corresponding-source.tar.xz -C dist OpenGame-${{ inputs.version }}-corresponding-source
+          (cd dist && shasum -a 256 *.zip *.tar.xz > SHA256SUMS.txt)
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.version }}" dist/*.zip dist/*.tar.xz dist/SHA256SUMS.txt --clobber

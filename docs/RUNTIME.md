@@ -1,16 +1,20 @@
 # 运行核心
 
-当前用户 Application Support/OpenGame/Engines 下的目录约定：
+完整 APP 的 `Contents/Resources/Runtime` 使用以下结构：
 
-| 家族 | Wine | DXVK | DXMT |
-| --- | --- | --- | --- |
-| 旧容器兼容核心 | WineHQ11 | WineHQ11-DXVK | WineHQ11-DXMT |
-| 默认核心 | WineFOSS11 | WineFOSS11-DXVK | WineFOSS11-DXMT |
+```text
+Engines/WineFOSS11/             一份 Wine 11 + MSync 核心
+Engines/Support/                GStreamer 等共享运行库
+RendererPacks/dxmt/             DXMT 的 32/64 位 d3d10core、d3d11、dxgi
+RendererPacks/dxvk/             DXVK 的 32/64 位 d3d10core、d3d11、dxgi
+manifest.json
+provenance.json
+```
 
-每个核心具有 bin/wine、bin/wineserver、lib/wine 等标准目录。DXMT 还需要匹配的 winemetal.dll/winemetal.so 和 Wine 的 macdrv_functions 窗口接口。仅把几个图形 DLL 放入 WineHQ 核心不保证游戏窗口可用。Mono/Gecko 与图形后端也需匹配。旧视频支持目录是 Engines/Support/GStreamer.framework/Versions/1.0，FOSS Wine 尚未编入 GStreamer。
+OpenGame 优先使用 APP 内核心。开发版没有内置核心时，回退到 `~/Library/Application Support/OpenGame`。旧 WineHQ 容器仍能读取，但所有新容器使用 Wine FOSS 11。
 
-默认核心来自 CodeWeavers 26.3.0 的公开 FOSS Wine 源码，独立构建为 x86-64 loader 与 Windows WoW64 DLL，再接入独立 DXMT。源归档哈希和已测功能见 provenance.json。核心使用本机独立 WineHQ 构建的 x86-64 动态依赖，当前尚未完成这些依赖的可移植发布自动化。
+创建或切换容器后，OpenGame 将所选渲染器的六个 DLL 原子安装到容器，并把原文件保存在 `.opengame-renderer-backup`。Steam CEF 使用 Wine 图形路径，游戏按容器选择加载 DXMT 或 DXVK。三个后端不再各自复制完整 Wine 树。
 
-`local-foss-build-reference.sh` 是此前已执行构建的参考配方，依赖旧研究工作目录、原 WineHQ 动态库和解压源码，不是克隆本仓库后就能执行成功的安装器。它记录了 Xcode/Clang、LLVM-MinGW、Bison、FreeType、GnuTLS 头文件与库，以及 MSync 所需构建方式。
+打包过程先运行 `relocate-runtime.py`，把构建目录和 `/opt/local` RPATH 改为 `@loader_path` 或 `@executable_path`，随后由 `audit-runtime.py` 拒绝绝对依赖、逃逸符号链接及私人运行状态。当前核心来自 CodeWeavers 26.3.0 公布的 FOSS 源码；归档哈希、构建开关和已测状态见 `provenance.json` 与 `runtime/BUILDING.md`。
 
-本机修正过：GnuTLS dylib install name、Unix 模块 rpath、wineserver 的 libinotify 查找路径；补编 bcrypt、crypt32、secur32 和 ntdll 后通过 HTTPS 验证。Windows 核心来源归档见 https://www.codeweavers.com/crossover/source 。完整核心构建 CI 与引擎安装器是后续分发工作，当前 Actions 仅构建启动器。
+Wine 已针对同包的 GStreamer 1.28.1 重新编译。完整包包含 `winegstreamer.so`、x86_64/i386 `winegstreamer.dll` 和经过白名单筛选的播放插件；GPL、受限专利、DVD、Python、GTK、采集、编辑和开发组件不会进入分发包。打包审计会拒绝缺少桥接模块的运行时。全新安装测试会用 OpenH264 生成测试流、经 Apple VideoToolbox 解码，并从 64 位和 32 位 Windows 探针加载 `winegstreamer.dll`。这证明 H.264 硬件解码路径和 Wine 桥接可装载，但尚未覆盖每种编码格式或真实游戏过场。Wine/VKD3D 的 x64 `D3D12CreateDevice` 探针已返回 `S_OK`，但尚未通过真实 DX12 游戏验收，不能视为与 D3DMetal 等效。

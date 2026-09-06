@@ -4,6 +4,9 @@
   "wine": "11.0",
   "msync": true,
   "tls_test": "HTTPS 200",
-  "gstreamer_compiled": false,
+  "d3d12_device_test": "D3D12CreateDevice x64 returned S_OK",
+  "gstreamer_compiled": true,
+  "gstreamer": "1.28.1; winegstreamer x86_64 Unix and x86_64/i386 Windows modules built",
+  "video_test": "OpenH264 encode/parse plus Apple VideoToolbox decode pipeline and 64/32-bit winegstreamer LoadLibrary probes returned success",
   "status": "experimental; Steam login and How to Fish menu/input confirmed by user; full compatibility not established"
 }

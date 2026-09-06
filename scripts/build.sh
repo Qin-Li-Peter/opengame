@@ -16,6 +16,7 @@ xcrun swiftc -target arm64-apple-macosx14.0 -swift-version 5 -warnings-as-errors
 xcrun swiftc -target arm64-apple-macosx14.0 -swift-version 5 -warnings-as-errors -parse-as-library source/OpenGameCore.swift source/OpenGameCLI.swift -o "$APP/Contents/MacOS/OpenGameCLI" -framework AppKit
 cp LICENSE "$APP/Contents/Resources/LICENSE"
 cp -R licenses "$APP/Contents/Resources/Licenses"
+cp -R recipes "$APP/Contents/Resources/Recipes"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 echo "Built $APP (launcher only; Wine runtimes are separate)"

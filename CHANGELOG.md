@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0
+
+- 新增可携带 Wine FOSS 11、DXMT、DXVK 和 GStreamer 1.28.1 的完整 APP 打包流程；Wine 已构建 x86_64/i386 `winegstreamer` 桥接，三个图形后端共用一份 Wine 核心，只发布六个不同的 Direct3D DLL，消除约 3.3 GB 重复文件。
+- 打包时自动重写构建机绝对动态库路径，并拒绝逃逸符号链接、Steam 登录数据、容器注册表和非系统绝对依赖。
+- 新增 Steam、VC++ 2015–2026 和 .NET Framework 4.8 自有安装配方。下载限定官方 HTTPS 域名并校验 SHA-256。
+- 完整包加入 SIL OFL 授权的 Liberation 字体，并为 Arial、Times New Roman、Courier New 配置替代字体。
+- 新增 `.opengamebottle` 容器归档、路径安全检查、恢复及跨用户路径迁移。
+- 新增完整对应源码下载与打包、Developer ID 签名、公证和干净 HOME 验收脚本，以及手动正式 Release 工作流。
+- GStreamer 分发改用显式组件白名单，排除 GPL/restricted/DVD 组件；源码包会校验并收录其 46 个 wrap 依赖归档。
+- 修正 universal 运行库路径重写后的签名顺序，逐个签署 Mach-O 后再签应用；容器归档同时拒绝越界符号链接。
+- 完整包优先使用 APP 内运行核心；原有本地引擎仍作为开发环境回退。
+
 ## 0.4.3
 
 - 图形界面新建容器固定使用 Wine FOSS 11、DXMT 和 MSync，不再提供旧核心选项，也不再使用“性能版”产品命名。
