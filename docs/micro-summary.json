@@ -1,0 +1,20 @@
+{
+  "OpenGame-FOSS-DXMT-MSync": {
+    "cpu_ms": 105.9909,
+    "event_roundtrip_us": 5.69927,
+    "shader1280_median_ms": 0.8676,
+    "draw1500_median_ms": 0.6967
+  },
+  "CrossOver-DXMT-MSync": {
+    "cpu_ms": 111.0493,
+    "event_roundtrip_us": 5.70003,
+    "shader1280_median_ms": 0.8457,
+    "draw1500_median_ms": 0.6699
+  },
+  "OpenGame-old-DXVK": {
+    "cpu_ms": 104.9687,
+    "event_roundtrip_us": 26.18466,
+    "shader1280_median_ms": 1.90335,
+    "draw1500_median_ms": 28.05385
+  }
+}

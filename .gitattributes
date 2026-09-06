@@ -1,0 +1,2 @@
+# Keep third-party license texts verbatim, including original whitespace.
+licenses/* -whitespace

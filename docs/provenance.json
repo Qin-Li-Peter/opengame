@@ -1,0 +1,9 @@
+{
+  "source": "CodeWeavers 26.3.0 public FOSS Wine source",
+  "source_archive_sha256": "ac99c8ca4b3848f3e81784135f023df266b61c2345726ea55a50b3e030dd6872",
+  "wine": "11.0",
+  "msync": true,
+  "tls_test": "HTTPS 200",
+  "gstreamer_compiled": false,
+  "status": "experimental; Steam login and How to Fish menu/input confirmed by user; full compatibility not established"
+}

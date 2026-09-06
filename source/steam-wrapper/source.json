@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/notpop/steam-on-m1-wine",
+  "commit": "540037ef96a3aa8f0bfee95d44e084d5402322a0",
+  "file": "wrapper/src/steamwebhelper-wrapper.c"
+}

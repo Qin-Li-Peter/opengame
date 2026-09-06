@@ -1,0 +1,18 @@
+LIBRARY version
+EXPORTS
+    GetFileVersionInfoA=OG_GetFileVersionInfoA
+    GetFileVersionInfoW=OG_GetFileVersionInfoW
+    GetFileVersionInfoSizeA=OG_GetFileVersionInfoSizeA
+    GetFileVersionInfoSizeW=OG_GetFileVersionInfoSizeW
+    VerQueryValueA=OG_VerQueryValueA
+    VerQueryValueW=OG_VerQueryValueW
+    GetFileVersionInfoExA=OG_GetFileVersionInfoExA
+    GetFileVersionInfoExW=OG_GetFileVersionInfoExW
+    GetFileVersionInfoSizeExA=OG_GetFileVersionInfoSizeExA
+    GetFileVersionInfoSizeExW=OG_GetFileVersionInfoSizeExW
+    VerLanguageNameA=OG_VerLanguageNameA
+    VerLanguageNameW=OG_VerLanguageNameW
+    VerFindFileA=OG_VerFindFileA
+    VerFindFileW=OG_VerFindFileW
+    VerInstallFileA=OG_VerInstallFileA
+    VerInstallFileW=OG_VerInstallFileW

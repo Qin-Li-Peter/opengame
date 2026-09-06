@@ -1,0 +1,25 @@
+[
+  {
+    "file": "wine-stable-11.0_1-osx64.tar.xz",
+    "url": "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.0_1/wine-stable-11.0_1-osx64.tar.xz",
+    "sha256": "b50dc50ec7f41d58b115a6b685d4d1315ba3c797bd3aa0f49213f2703cb82388",
+    "verified_against_publisher_metadata": true
+  },
+  {
+    "file": "Template-1.0.15.tar.xz",
+    "url": "https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.15.tar.xz",
+    "sha256": "34273bcce885ce5a7fd6937af9ea344bb9961de7d55d6193f7413142e835c8c3",
+    "verified_against_publisher_metadata": true
+  },
+  {
+    "file": "dxmt-v0.80-builtin.tar.gz",
+    "url": "https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz",
+    "sha256": "8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d",
+    "verified_against_publisher_metadata": true,
+    "license": "MIT for v0.80",
+    "excluded_modules": [
+      "nvapi64.dll",
+      "nvngx.dll"
+    ]
+  }
+]

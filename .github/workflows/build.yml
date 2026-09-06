@@ -1,0 +1,37 @@
+name: Build launcher preview
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned cross compiler
+        shell: bash
+        run: |
+          mkdir -p tools
+          curl --fail --location --retry 3 https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-macos-universal.tar.xz -o tools/llvm-mingw.tar.xz
+          echo '48bedd161f14ae25a3646cb750b57ee3188e97e34bd3c52240c1810aa74d6a7f  tools/llvm-mingw.tar.xz' | shasum -a 256 -c -
+          tar -xf tools/llvm-mingw.tar.xz -C tools
+          echo "OG_MINGW_CC=$PWD/tools/llvm-mingw-20260826-ucrt-macos-universal/bin/x86_64-w64-mingw32-gcc" >> "$GITHUB_ENV"
+      - run: scripts/test.sh
+      - run: scripts/build.sh
+      - run: scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: OpenGame-launcher-preview-macos-arm64
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          retention-days: 14
+          if-no-files-found: error
