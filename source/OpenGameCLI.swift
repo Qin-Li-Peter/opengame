@@ -9,7 +9,7 @@ import Foundation
    case "list":
     let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];print(String(data:try encoder.encode(core.load()),encoding:.utf8)!)
    case "create":
-    guard (args.count==3 || args.count==4),let renderer=Renderer(rawValue:args[2]),let family=EngineFamily(rawValue:args.count==4 ? args[3] : "winehq") else{throw OGError.message("create NAME wine|dxvk|dxmt [winehq|foss]")}
+    guard (args.count==3 || args.count==4),let renderer=Renderer(rawValue:args[2]),let family=EngineFamily(rawValue:args.count==4 ? args[3] : "foss") else{throw OGError.message("create NAME wine|dxvk|dxmt [foss|winehq]")}
     let b=try core.createBottle(name:args[1],renderer:renderer,engineFamily:family);print(b.id)
    case "copy":
     guard args.count==3 else{throw OGError.message("copy BOTTLE_ID NAME")}

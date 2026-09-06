@@ -6,7 +6,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Diagnostics;
-[BepInPlugin("local.opengame.performance", "OpenGame Performance Recorder", "1.0")]
+[BepInPlugin("local.opengame.telemetry", "OpenGame Telemetry Recorder", "1.0")]
 public class Telemetry : BaseUnityPlugin {
  readonly List<double> frameTimes=new List<double>();
  int renderedFrames,lastRendered=-1;

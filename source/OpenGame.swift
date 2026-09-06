@@ -27,12 +27,16 @@ import UniformTypeIdentifiers
         launching.insert(game.id);status="正在检查 \(game.title)…"
         let service=core
         DispatchQueue.global(qos:.userInitiated).async{
-            let result=Result{try service.runningGameStatus(game)}
+            let result=Result{() -> (String?,LaunchSpec?) in
+                if let existing=try service.runningGameStatus(game){return(existing,nil)}
+                try service.prepareSteam(for:game)
+                return(nil,try service.gameSpec(game))
+            }
             DispatchQueue.main.async{
                 switch result {
-                case .success(let existing):
+                case .success(let (existing,spec)):
                     if let existing=existing {self.status=existing}
-                    else {do{self.start(try service.gameSpec(game))}catch{self.error=error.localizedDescription}}
+                    else if let spec=spec {self.start(spec)}
                 case .failure(let error):self.error=error.localizedDescription
                 }
                 DispatchQueue.main.asyncAfter(deadline:.now()+2){self.launching.remove(game.id)}
@@ -164,6 +168,7 @@ struct ContentView:View{
     var games:[Game]{model.library.games.filter{(selectedBottle=="all" || $0.bottleID==selectedBottle) && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search))}}
     var current:Game?{games.first{$0.id==selectedGame}}
     var title:String{model.library.bottles.first{$0.id==selectedBottle}?.name ?? "所有游戏"}
+    var version:String{Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? ""}
     var preferredBottle:String{selectedBottle=="all" ? (model.library.bottles.first?.id ?? "") : selectedBottle}
     func openSteam(){
         let available=model.library.bottles.filter{b in (try? model.core.prefix(b).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")).map{FileManager.default.fileExists(atPath:$0.path)} ?? false}
@@ -183,7 +188,7 @@ struct ContentView:View{
             .safeAreaInset(edge:.bottom){
                 VStack(alignment:.leading,spacing:12){
                     Button("新建容器",systemImage:"plus"){showCreate=true}.disabled(model.busy)
-                    HStack(spacing:10){Image(nsImage:NSApplication.shared.applicationIconImage).resizable().frame(width:36,height:36);Text("OpenGame 0.4.2\n独立 Wine 游戏管理器").font(.caption).foregroundStyle(.secondary)}
+                    HStack(spacing:10){Image(nsImage:NSApplication.shared.applicationIconImage).resizable().frame(width:36,height:36);Text("OpenGame \(version)\n独立 Wine 游戏管理器").font(.caption).foregroundStyle(.secondary)}
                 }.frame(maxWidth:.infinity,alignment:.leading).padding(16)
             }
         }detail:{
@@ -286,7 +291,7 @@ struct BottleEditor:View{
             TextField("容器名称",text:$bottle.name).textFieldStyle(.roundedBorder)
             Picker("运行核心",selection:Binding(get:{bottle.engineFamily ?? .winehq},set:{bottle.engineFamily=$0})){ForEach(EngineFamily.allCases,id:\.self){Text($0.label).tag($0)}}
             Picker("图形后端",selection:$bottle.renderer){ForEach(Renderer.allCases,id:\.self){Text($0.label).tag($0)}}
-            Text("更换核心前请退出此容器的所有程序。性能核心已通过 DXMT 窗口呈现和 MSync 测试，真实游戏仍需逐款验证；部分视频播放尚未兼容。原核心的 DXMT 窗口呈现存在已知故障。").font(.callout).foregroundStyle(.secondary)
+            Text("更换核心前请退出此容器的所有程序。推荐核心已通过 DXMT 窗口呈现和 MSync 测试，真实游戏仍需逐款验证；部分视频播放尚未兼容。WineHQ 兼容核心的 DXMT 窗口呈现存在已知故障。").font(.callout).foregroundStyle(.secondary)
             if let message=message{Text(message).foregroundStyle(.red)}
             HStack{Spacer();Button("取消"){dismiss()};Button("保存"){do{try model.core.updateBottle(bottle);model.reload();dismiss()}catch{message=error.localizedDescription}}.buttonStyle(.borderedProminent)}
         }.padding(26).frame(width:550)
@@ -371,15 +376,15 @@ struct CreateBottleSheet:View{
     @EnvironmentObject var model:AppModel
     @Environment(\.dismiss) var dismiss
     @State private var name=""
-    @State private var renderer=Renderer.dxvk
-    @State private var engineFamily=EngineFamily.winehq
+    @State private var renderer=Renderer.dxmt
+    @State private var engineFamily=EngineFamily.foss
     var body:some View{
         VStack(alignment:.leading,spacing:20){
             Text("新建独立容器").font(.title2.bold())
             TextField("例如：新游戏",text:$name).textFieldStyle(.roundedBorder)
             Picker("运行核心",selection:$engineFamily){ForEach(EngineFamily.allCases,id:\.self){Text($0.label).tag($0)}}
             Picker("图形后端",selection:$renderer){ForEach(Renderer.allCases,id:\.self){Text($0.label).tag($0)}}
-            Text("创建 Windows 10 兼容环境，同时支持 32 位和 64 位程序。每个容器有独立的游戏配置与存档。DirectX 12 与内核反作弊不在当前支持范围内。").font(.callout).foregroundStyle(.secondary)
+            Text("默认使用 Wine FOSS 11 + MSync 与 DXMT 创建 Windows 10 兼容环境，同时支持 32 位和 64 位程序。每个容器有独立的游戏配置与存档。DirectX 12 与内核反作弊不在当前支持范围内。").font(.callout).foregroundStyle(.secondary)
             HStack{if model.busy{ProgressView().controlSize(.small);Text("正在初始化…")};Spacer();Button("取消"){dismiss()}.disabled(model.busy);Button("创建"){model.create(name:name,renderer:renderer,engineFamily:engineFamily){ok in if ok{dismiss()}}}.buttonStyle(.borderedProminent).disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || model.busy)}
         }.padding(26).frame(width:520)
     }

@@ -18,7 +18,13 @@ if str(game) in processes:raise SystemExit('Exit this game before installing its
 source=Path(__file__).resolve().parents[2]/'build/OpenGame.app/Contents/Resources/PointerInput/version.dll'
 data=source.read_bytes();digest=hashlib.sha256(data).hexdigest();target=folder/'version.dll'
 if target.exists() and target.read_bytes()!=data:raise SystemExit('A different version.dll exists; preserved without changes.')
-engine=root/'Engines/WineHQ11'
+catalog=json.loads((root/'library.json').read_text())
+bottle=next((b for b in catalog['bottles'] if b['directory']==f'Prefixes/{relative.parts[0]}'),None)
+if bottle is None:raise SystemExit('The game container is not registered in OpenGame.')
+family='WineFOSS11' if bottle.get('engineFamily')=='foss' else 'WineHQ11'
+suffix={'wine':'','dxvk':'-DXVK','dxmt':'-DXMT'}[bottle['renderer']]
+engine=root/'Engines'/(family+suffix)
+if not (engine/'bin/wine').is_file():raise SystemExit(f'OpenGame runtime is missing: {engine}')
 env={k:v for k,v in os.environ.items() if not k.startswith(('WINE','CX_','DYLD_','DXVK_','DXMT_'))}
 env.update(WINEPREFIX=str(prefix),WINEDEBUG='-all',WINEDLLOVERRIDES='winemenubuilder.exe=',DYLD_FALLBACK_LIBRARY_PATH=str(engine/'lib')+':/usr/lib')
 key='HKCU\\Software\\Wine\\AppDefaults\\'+game.name+'\\DllOverrides'

@@ -10,7 +10,7 @@ enum Renderer: String, Codable, CaseIterable { case wine, dxvk, dxmt
     var label: String { switch self {case .wine:return "Wine · 旧游戏 / 2D";case .dxvk:return "DXVK · DirectX 10/11";case .dxmt:return "DXMT · DirectX 10/11 → Metal"} }
 }
 enum EngineFamily: String, Codable, CaseIterable { case winehq, foss
-    var label: String { self == .foss ? "性能核心 · WineFOSS11 + MSync（实验）" : "原核心 · WineHQ11" }
+    var label: String { self == .foss ? "Wine FOSS 11 + MSync（推荐）" : "WineHQ 11（兼容旧容器）" }
 }
 struct Bottle: Codable, Identifiable, Hashable {
     var id: String; var name: String; var directory: String; var renderer: Renderer
@@ -180,10 +180,28 @@ final class OpenGameCore: @unchecked Sendable {
         let launch=try spec(bottle:b,arguments:[game.executable]+game.arguments,directory:URL(fileURLWithPath:game.workingDirectory),logID:game.id)
         if let appID=game.steamID,URL(fileURLWithPath:game.executable).lastPathComponent.lowercased() != "steam.exe" {
             guard !appID.isEmpty,appID.allSatisfy({$0.isASCII && $0.isNumber}) else {throw OGError.message("Steam 游戏编号无效。")}
-            var env=launch.environment;env["SteamAppId"]=appID;env["SteamGameId"]=appID
+            var env=launch.environment;env["SteamAppId"]=appID;env["SteamGameId"]=appID;env["OPENGAME_STEAM_BOTTLE"]=b.id
             return LaunchSpec(executable:launch.executable,arguments:launch.arguments,directory:launch.directory,environment:env,log:launch.log)
         }
         return launch
+    }
+    func prepareSteam(for game:Game) throws {
+        guard game.steamID != nil,URL(fileURLWithPath:game.executable).lastPathComponent.lowercased() != "steam.exe" else{return}
+        let lib=try load();guard let bottle=lib.bottles.first(where:{$0.id==game.bottleID}) else{throw OGError.message("游戏对应的容器不存在。")}
+        let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
+        guard fm.fileExists(atPath:steam.path) else{return}
+        let request=try spec(bottle:bottle,arguments:[steam.path],directory:steam.deletingLastPathComponent(),logID:"steam-"+bottle.id)
+        func running() -> Bool {
+            ((try? windowsTaskNames(request)) ?? []).contains("steam.exe") || ((try? nativeWindowsTaskNames()) ?? []).contains("steam.exe")
+        }
+        if running(){return}
+        _=try start(request)
+        let deadline=Date().addingTimeInterval(35)
+        while Date()<deadline {
+            if running(){Thread.sleep(forTimeInterval:2);return}
+            Thread.sleep(forTimeInterval:0.5)
+        }
+        throw OGError.message("Steam 启动超时，请先打开 Steam 后重试。")
     }
     func runningGameStatus(_ game:Game) throws -> String? {
         // Steam.exe is a launcher shared by many games, not a game identity.
@@ -417,7 +435,7 @@ final class OpenGameCore: @unchecked Sendable {
         if p.isRunning { p.terminate();throw OGError.message("操作超时，详情见日志。") }
         return p.terminationStatus
     }
-    func createBottle(name: String, renderer: Renderer, engineFamily: EngineFamily = .winehq) throws -> Bottle {
+    func createBottle(name: String, renderer: Renderer, engineFamily: EngineFamily = .foss) throws -> Bottle {
         let name=name.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !name.isEmpty else { throw OGError.message("请输入容器名称。") }
         let id=UUID().uuidString.lowercased();let b=Bottle(id:id,name:name,directory:"Prefixes/\(id)",renderer:renderer,engineFamily:engineFamily)

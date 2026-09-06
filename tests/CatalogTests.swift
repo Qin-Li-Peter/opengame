@@ -15,11 +15,11 @@ import Foundation
         let old=try core.load()
         precondition(old.bottles.count==1 && old.bottles[0].engineFamily==nil)
         precondition(core.runtime(old.bottles[0]).path.hasSuffix("WineHQ11-DXVK/bin/wine"))
-        var performance=old.bottles[0];performance.engineFamily = .foss;performance.renderer = .dxmt
-        precondition(core.runtime(performance).path.hasSuffix("WineFOSS11-DXMT/bin/wine"))
-        let env=try core.environment(performance)
+        var current=old.bottles[0];current.engineFamily = .foss;current.renderer = .dxmt
+        precondition(core.runtime(current).path.hasSuffix("WineFOSS11-DXMT/bin/wine"))
+        let env=try core.environment(current)
         precondition(env["WINEMSYNC"]=="1")
-        try core.mutate { $0.bottles.append(performance) }
+        try core.mutate { $0.bottles.append(current) }
         let reloaded=try core.load()
         precondition(reloaded.bottles.count==2)
         print("PASS: empty first-run catalog, existing catalog preservation, runtime family routing")
