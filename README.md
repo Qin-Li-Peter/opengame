@@ -10,6 +10,7 @@ macOS 上的原生 Windows 游戏管理器。SwiftUI 启动器支持 Wine、DXVK
 - 扫描默认 Steam 库、保存启动参数、工作目录和游戏原始图标。
 - 每个容器选择 Wine 家族和图形后端；性能核心自动启用 MSync。
 - Steam CEF 参数包装器、重复启动检查、逐游戏日志。
+- 原生应用图标；Command-Q 会先请求游戏和 Steam 正常退出，再结束各 OpenGame 容器的 Wine 服务。
 - 新安装从空游戏库开始；已有游戏库保持原样。游戏图标从用户自己的 EXE/库中提取。
 
 ## 本地构建
@@ -44,6 +45,8 @@ GitHub Actions 在推送、PR、版本标签和手动触发时构建，产物保
 仓库测试覆盖空白首次启动、旧目录保留以及 Wine 家族路由。32/64 位窗口 Present、HTTPS 的诊断源码在 docs。此前同一微基准的五轮中位数见 [micro-summary.json](docs/micro-summary.json)：新核心四项耗时与 CrossOver DXMT + MSync 相差约 5% 以内，不能推导全部游戏或真实 FPS 等效。
 
 当前缺少 DX12/D3DMetal、DLSS、自动安装配方和完整容器归档恢复。FOSS 核心未编入 GStreamer；Steam 错误报告程序有已知崩溃；其它游戏、联机与长期稳定性需要逐项验证。
+
+退出时若程序拒绝 Windows 会话结束，OpenGame 会保持运行并给出“重试／取消／强制退出”。只有明确选择强制退出才会跳过保存保护。Steam 正常退出后偶发残留的 CEF／错误报告辅助进程会自动清理，不再把它误报为游戏拒绝退出。退出逻辑严格限定在 OpenGame 的 `Prefixes` 目录，不操作 CrossOver 或其它 Wine 环境。
 
 ## 许可证
 

@@ -8,21 +8,22 @@ import UniformTypeIdentifiers
     @Published var status="点击游戏图标或“运行”启动游戏；已运行的游戏会尝试显示原窗口。"
     @Published var error:String?
     @Published var busy=false
+    @Published var isQuitting=false
     private var processes:[Process]=[]
     private var launching=Set<String>()
-    init(){reload()}
+    init(){core.resumeLaunches();reload()}
     func reload(){do{try core.ensureCatalog();library=try core.load()}catch{self.error=error.localizedDescription}}
     func perform(_ action:()throws->Void){do{try action();reload()}catch{self.error=error.localizedDescription}}
-    func start(_ spec:LaunchSpec){do{
+    func start(_ spec:LaunchSpec){guard !isQuitting else{return};do{
         let p=try core.start(spec);processes.removeAll{!$0.isRunning};processes.append(p)
         status=spec.arguments.first.map{URL(fileURLWithPath:$0).lastPathComponent.lowercased()=="steam.exe"} == true ? "Steam 正在启动，首次可能需要约 30 秒；请在弹出的窗口登录。" : "启动请求已发出；可在日志中查看运行结果。"
         p.terminationHandler={ [weak self] process in
             guard process.terminationStatus != 0 && process.terminationStatus != 42 else{return}
-            DispatchQueue.main.async{self?.status="程序已退出，返回码 \(process.terminationStatus)。请查看 \(spec.log.lastPathComponent)。"}
+            DispatchQueue.main.async{guard self?.isQuitting != true else{return};self?.status="程序已退出，返回码 \(process.terminationStatus)。请查看 \(spec.log.lastPathComponent)。"}
         }
     }catch{self.error=error.localizedDescription}}
     func launch(_ game:Game){
-        guard !launching.contains(game.id) else{return}
+        guard !isQuitting && !launching.contains(game.id) else{return}
         launching.insert(game.id);status="正在检查 \(game.title)…"
         let service=core
         DispatchQueue.global(qos:.userInitiated).async{
@@ -63,6 +64,41 @@ import UniformTypeIdentifiers
             DispatchQueue.main.async{self.busy=false;switch result{case .success(let copied):self.reload();self.status="容器“\(copied.name)”已复制。";done(true);case .failure(let e):self.error=e.localizedDescription;done(false)}}
         }
     }
+    func requestQuit(_ reply:@escaping(Bool)->Void) {
+        isQuitting=true
+        status=busy ? "正在等待容器操作完成，然后退出…" : "正在关闭游戏与 Steam…"
+        waitForOperationsThenQuit(reply)
+    }
+    private func waitForOperationsThenQuit(_ reply:@escaping(Bool)->Void) {
+        if busy {
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.1){self.waitForOperationsThenQuit(reply)}
+        } else {finishQuit(force:false,reply:reply)}
+    }
+    private func finishQuit(force:Bool,reply:@escaping(Bool)->Void) {
+        status=force ? "正在强制关闭 OpenGame 的运行环境…" : "正在关闭游戏与 Steam；如有保存提示，请先处理。"
+        let service=core
+        DispatchQueue.global(qos:.userInitiated).async {
+            let result=Result{try service.shutdown(force:force)}
+            DispatchQueue.main.async {
+                switch result {
+                case .success:reply(true)
+                case .failure(let error):
+                    let alert=NSAlert();alert.alertStyle = .warning
+                    alert.messageText="还有程序没有退出"
+                    alert.informativeText=error.localizedDescription+"\n强制退出可能丢失尚未保存的游戏进度。"
+                    alert.addButton(withTitle:"重试退出")
+                    alert.addButton(withTitle:"取消")
+                    alert.addButton(withTitle:"强制退出")
+                    switch alert.runModal() {
+                    case .alertFirstButtonReturn:self.finishQuit(force:false,reply:reply)
+                    case .alertThirdButtonReturn:self.finishQuit(force:true,reply:reply)
+                    default:self.core.resumeLaunches();self.isQuitting=false;self.status="已取消退出。";reply(false)
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 struct GameIcon:View {
@@ -78,12 +114,39 @@ struct GameIcon:View {
     }
 }
 
+@MainActor final class OpenGameAppDelegate:NSObject,NSApplicationDelegate {
+    weak var model:AppModel?
+    private var terminationPending=false
+    func applicationShouldTerminate(_ sender:NSApplication)->NSApplication.TerminateReply {
+        guard let model=model else{return .terminateNow}
+        if !terminationPending {
+            terminationPending=true
+            model.requestQuit { [weak self,weak sender] shouldQuit in
+                self?.terminationPending=false
+                sender?.reply(toApplicationShouldTerminate:shouldQuit)
+            }
+        }
+        return .terminateLater
+    }
+}
+
 @main struct OpenGameApp:App {
+    @NSApplicationDelegateAdaptor(OpenGameAppDelegate.self) private var appDelegate
     @StateObject private var model=AppModel()
     var body:some Scene{
-        WindowGroup("OpenGame") {ContentView().environmentObject(model).frame(minWidth:940,minHeight:650)}
+        WindowGroup("OpenGame") {
+            ContentView().environmentObject(model).frame(minWidth:940,minHeight:650)
+                .disabled(model.isQuitting)
+                .overlay {
+                    if model.isQuitting {
+                        VStack(spacing:14){ProgressView();Text(model.status).multilineTextAlignment(.center)}
+                            .padding(28).background(.regularMaterial,in:RoundedRectangle(cornerRadius:18))
+                    }
+                }
+                .onAppear{appDelegate.model=model}
+        }
         .defaultSize(width:1040,height:710)
-        .commands{CommandGroup(after:.newItem){Button("刷新游戏库"){model.reload()}.keyboardShortcut("r")}}
+        .commands{CommandGroup(after:.newItem){Button("刷新游戏库"){model.reload()}.keyboardShortcut("r").disabled(model.isQuitting)}}
     }
 }
 
@@ -120,7 +183,7 @@ struct ContentView:View{
             .safeAreaInset(edge:.bottom){
                 VStack(alignment:.leading,spacing:12){
                     Button("新建容器",systemImage:"plus"){showCreate=true}.disabled(model.busy)
-                    Text("OpenGame 0.4.1\n独立 Wine 游戏管理器").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing:10){Image(nsImage:NSApplication.shared.applicationIconImage).resizable().frame(width:36,height:36);Text("OpenGame 0.4.2\n独立 Wine 游戏管理器").font(.caption).foregroundStyle(.secondary)}
                 }.frame(maxWidth:.infinity,alignment:.leading).padding(16)
             }
         }detail:{

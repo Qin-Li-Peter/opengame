@@ -27,6 +27,16 @@ static BOOL CALLBACK find_window(HWND window, LPARAM unused) {
 }
 int wmain(int argc,wchar_t **argv) {
     if(argc!=2) return 4;
+    if(!_wcsicmp(argv[1],L"--list")) {
+        HANDLE processes=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+        if(processes==INVALID_HANDLE_VALUE) return 4;
+        PROCESSENTRY32W process={0};process.dwSize=sizeof(process);
+        if(Process32FirstW(processes,&process)) do {
+            wprintf(L"\"%ls\"\n",process.szExeFile);
+        } while(Process32NextW(processes,&process));
+        CloseHandle(processes);
+        return 0;
+    }
     wchar_t expected[32768];
     DWORD length=GetFullPathNameW(argv[1],32768,expected,NULL);
     if(!length || length>=32768) return 4;

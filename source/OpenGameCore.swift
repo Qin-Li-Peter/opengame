@@ -31,6 +31,11 @@ struct LaunchSpec {
 final class OpenGameCore: @unchecked Sendable {
     let root: URL
     let fm = FileManager.default
+    private let processLock=NSLock()
+    private var acceptingLaunches=true
+    private var children:[Process]=[]
+    private var watchers:[Process]=[]
+    private var sessionSpecs:[String:LaunchSpec]=[:]
     init(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/OpenGame")) { self.root = root }
     var catalog: URL { root.appendingPathComponent("library.json") }
     func path(_ part: String) -> URL { root.appendingPathComponent(part) }
@@ -97,6 +102,7 @@ final class OpenGameCore: @unchecked Sendable {
     // Valve binary and install our parameter-only wrapper before restarting CEF.
     // All process operations use this bottle's WINEPREFIX, never a host-wide kill.
     func watchSteamUI(_ bottle:Bottle) throws {
+        guard !hasClosingMarker() else{return}
         let fd=Darwin.open(try prefix(bottle).appendingPathComponent(".opengame-steam-watch.lock").path,O_CREAT|O_RDWR,0o600)
         guard fd>=0 else {throw OGError.message("无法锁定 Steam 界面监控。")}
         defer {flock(fd,LOCK_UN);Darwin.close(fd)}
@@ -107,6 +113,7 @@ final class OpenGameCore: @unchecked Sendable {
         guard PEIcon.isExecutable(wrapper) else {throw OGError.message("Steam 界面包装器无效。")}
         var uiBottle=bottle;uiBottle.renderer = .wine
         func command(_ args:[String]) throws -> String {
+            guard !hasClosingMarker() else{throw OGError.message("OpenGame 正在退出。") }
             let process=Process(),pipe=Pipe()
             process.executableURL=runtime(uiBottle);process.arguments=args
             process.environment=try environment(uiBottle);process.standardInput=FileHandle.nullDevice
@@ -119,6 +126,7 @@ final class OpenGameCore: @unchecked Sendable {
         let deadline=Date().addingTimeInterval(90)
         while Date()<deadline {
             Thread.sleep(forTimeInterval:2)
+            guard !hasClosingMarker() else{return}
             guard let current=try? Data(contentsOf:helper),PEIcon.isExecutable(current) else {continue}
             if current==wrapper {previous=nil;continue}
             defer {previous=current}
@@ -128,6 +136,7 @@ final class OpenGameCore: @unchecked Sendable {
             guard current[offset+4]==0x64,current[offset+5]==0x86 else {throw OGError.message("Steam CEF 架构已变化，需要更新兼容组件。")}
             let tasks=try command(["tasklist","/FO","CSV","/NH"])
             guard tasks.lowercased().contains("\"steamwebhelper.exe\"") else {continue}
+            guard !hasClosingMarker() else{return}
             let backup=path("Backups/SteamCompat/"+UUID().uuidString)
             try fm.createDirectory(at:backup,withIntermediateDirectories:true)
             try current.write(to:backup.appendingPathComponent("steamwebhelper.exe"),options:.atomic)
@@ -219,6 +228,13 @@ final class OpenGameCore: @unchecked Sendable {
         return false
     }
     @discardableResult func start(_ spec: LaunchSpec) throws -> Process {
+        processLock.lock();defer{processLock.unlock()}
+        guard acceptingLaunches && !hasClosingMarker() else{throw OGError.message("OpenGame 正在退出，暂时不能启动程序。")}
+        if let prefix=spec.environment["WINEPREFIX"] {
+            let candidate=URL(fileURLWithPath:prefix).resolvingSymlinksInPath().path
+            guard candidate.hasPrefix(root.resolvingSymlinksInPath().path+"/Prefixes/") else{throw OGError.message("拒绝管理 OpenGame 之外的容器。")}
+            sessionSpecs[candidate]=spec
+        }
         try fm.createDirectory(at:spec.log.deletingLastPathComponent(),withIntermediateDirectories:true)
         if !fm.fileExists(atPath:spec.log.path) { fm.createFile(atPath:spec.log.path,contents:nil) }
         let log=try FileHandle(forWritingTo:spec.log);try log.seekToEnd()
@@ -227,15 +243,173 @@ final class OpenGameCore: @unchecked Sendable {
         let p=Process();p.executableURL=spec.executable;p.arguments=spec.arguments;p.environment=spec.environment;p.currentDirectoryURL=spec.directory
         p.standardInput=FileHandle.nullDevice;p.standardOutput=log;p.standardError=log
         do { try p.run() } catch { try? log.close();throw error }
+        children.removeAll{!$0.isRunning};children.append(p)
         // Child owns duplicated descriptors after spawn; close the parent's copies.
         if let bottleID=spec.environment["OPENGAME_STEAM_BOTTLE"] {
             let watcher=Process()
             let sibling=URL(fileURLWithPath:CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("OpenGameCLI")
             watcher.executableURL=fm.isExecutableFile(atPath:sibling.path) ? sibling : path("bin/OpenGameCLI")
             watcher.arguments=["steam-watch",bottleID];watcher.standardInput=FileHandle.nullDevice;watcher.standardOutput=log;watcher.standardError=log
-            do {try watcher.run()} catch {try? log.write(contentsOf:Data("Steam 界面监控启动失败：\(error.localizedDescription)\n".utf8))}
+            do {try watcher.run();watchers.removeAll{!$0.isRunning};watchers.append(watcher)} catch {try? log.write(contentsOf:Data("Steam 界面监控启动失败：\(error.localizedDescription)\n".utf8))}
         }
         try? log.close();return p
+    }
+    // Cross-process marker also stops helpers launched by an earlier app version.
+    private var closingMarker:URL {path(".application-closing")}
+    private func hasClosingMarker() -> Bool {
+        guard let text=try? String(contentsOf:closingMarker,encoding:.utf8),let pid=Int32(text.trimmingCharacters(in:.whitespacesAndNewlines)) else{return false}
+        return Darwin.kill(pid,0)==0 || errno==EPERM
+    }
+    func resumeLaunches() {
+        processLock.lock();defer{processLock.unlock()}
+        acceptingLaunches=true
+        try? fm.removeItem(at:closingMarker)
+    }
+    private func shutdownCommand(_ executable:URL,_ arguments:[String],_ environment:[String:String],timeout:TimeInterval) throws -> Int32 {
+        try fm.createDirectory(at:path("Logs"),withIntermediateDirectories:true)
+        let destination=path("Logs/shutdown.log")
+        if !fm.fileExists(atPath:destination.path){fm.createFile(atPath:destination.path,contents:nil)}
+        let log=try FileHandle(forWritingTo:destination);defer{try? log.close()};try log.seekToEnd()
+        try log.write(contentsOf:Data(("\n["+ISO8601DateFormatter().string(from:Date())+"] "+(environment["WINEPREFIX"] ?? "")+" "+executable.lastPathComponent+" "+arguments.joined(separator:" ")+"\n").utf8))
+        let p=Process();p.executableURL=executable;p.arguments=arguments;p.environment=environment
+        p.standardInput=FileHandle.nullDevice;p.standardOutput=log;p.standardError=log
+        try p.run()
+        do {return try wait(p,timeout:timeout)}
+        catch {
+            // A timed-out shutdown helper must not complete later after Cancel.
+            if p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL);p.waitUntilExit()}
+            throw error
+        }
+    }
+    private func windowsTaskNames(_ spec:LaunchSpec) throws -> [String] {
+        let helper=path("bin/OpenGameWindow.exe")
+        var names=Set<String>()
+        // Wine's process snapshot can briefly lag a just-detached child. Merge a
+        // few bounded snapshots so Command-Q immediately after launch remains safe.
+        for attempt in 0..<3 {
+            if attempt>0 {Thread.sleep(forTimeInterval:0.2)}
+            let p=Process(),output=Pipe()
+            p.executableURL=spec.executable
+            p.arguments=fm.fileExists(atPath:helper.path) ? [helper.path,"--list"] : ["tasklist","/FO","CSV","/NH"]
+            p.environment=spec.environment
+            p.standardInput=FileHandle.nullDevice;p.standardOutput=output;p.standardError=FileHandle.nullDevice
+            try p.run()
+            let data=output.fileHandleForReading.readDataToEndOfFile()
+            guard try wait(p,timeout:5)==0,let text=String(data:data,encoding:.utf8) else{continue}
+            for line in text.split(separator:"\n") {
+                guard line.first=="\"",let end=line.dropFirst().firstIndex(of:"\"") else{continue}
+                names.insert(String(line[line.index(after:line.startIndex)..<end]).lowercased())
+            }
+        }
+        return names.sorted()
+    }
+    private func writeShutdownNote(_ text:String) {
+        let destination=path("Logs/shutdown.log")
+        if let log=try? FileHandle(forWritingTo:destination) {
+            _ = try? log.seekToEnd()
+            _ = try? log.write(contentsOf:Data((text+"\n").utf8))
+            _ = try? log.close()
+        }
+    }
+    private func nativeWindowsTaskNames() throws -> [String] {
+        let p=Process(),output=Pipe()
+        p.executableURL=URL(fileURLWithPath:"/bin/ps");p.arguments=["-axo","comm="]
+        p.standardInput=FileHandle.nullDevice;p.standardOutput=output;p.standardError=FileHandle.nullDevice
+        try p.run()
+        let data=output.fileHandleForReading.readDataToEndOfFile()
+        guard try wait(p,timeout:3)==0,let text=String(data:data,encoding:.utf8) else{return []}
+        let expression=try NSRegularExpression(pattern:"(?i)([a-z0-9_.-]+\\.exe)(?:\\s|$)")
+        var names=Set<String>()
+        for line in text.split(separator:"\n") {
+            let value=String(line),range=NSRange(value.startIndex...,in:value)
+            guard let match=expression.firstMatch(in:value,range:range),let capture=Range(match.range(at:1),in:value) else{continue}
+            names.insert(String(value[capture]).lowercased())
+        }
+        return names.sorted()
+    }
+    private func closeResidualSteamHelpers(_ spec:LaunchSpec,fallback:[String]) throws -> Bool {
+        let infrastructure:Set<String>=["services.exe","explorer.exe","rpcss.exe","svchost.exe","winedevice.exe","plugplay.exe","conhost.exe","start.exe","tasklist.exe","wineboot.exe","winedbg.exe","steamservice.exe"]
+        let helpers:Set<String>=["steam.exe","steamwebhelper.exe","steamwebhelper_real.exe","steamerrorreporter.exe","steamerrorreporter64.exe","unitycrashhandler64.exe"]
+        let current=try windowsTaskNames(spec)
+        var currentTasks=Set(current)
+        // Steam's CEF crash reporter can outlive its Wine process-table entry.
+        // Native process names let us distinguish that known residue from a
+        // still-running game after Steam has accepted the end-session request.
+        if spec.environment["OPENGAME_STEAM_BOTTLE"] != nil {
+            currentTasks.formUnion(try nativeWindowsTaskNames())
+        }
+        // A crashed helper can disappear from Wine's task table while its host
+        // process is still alive. In that state use the pre-shutdown snapshot;
+        // it also prevents a game that vetoed shutdown from being misclassified.
+        let tasks=currentTasks.subtracting(infrastructure).isEmpty ? Set(fallback) : currentTasks
+        writeShutdownNote("Remaining Windows tasks: "+tasks.sorted().joined(separator:", "))
+        let blockers=tasks.subtracting(infrastructure).subtracting(helpers)
+        // Only use this recovery path when a known Steam helper was observed.
+        // An infrastructure-only snapshot is ambiguous: a newly detached game
+        // may not have reached Wine's process table yet, and could veto logout.
+        guard blockers.isEmpty,!tasks.isDisjoint(with:helpers) else{return false}
+        for name in tasks.intersection(helpers) {
+            _ = try? shutdownCommand(spec.executable,["taskkill","/IM",name,"/F"],spec.environment,timeout:5)
+        }
+        return true
+    }
+    // The Wine server, rather than the original loader PID, owns detached clients.
+    // Only validated OpenGame prefixes are considered. Signal 0 probes the server
+    // without starting one; clean session end respects WM_QUERYENDSESSION vetoes.
+    func shutdown(force:Bool=false,gracePeriod:TimeInterval=15) throws {
+        processLock.lock()
+        acceptingLaunches=false
+        do {try fm.createDirectory(at:root,withIntermediateDirectories:true);try String(getpid()).write(to:closingMarker,atomically:true,encoding:.utf8)}
+        catch {processLock.unlock();throw error}
+        let savedSpecs=sessionSpecs,owned=children,helpers=watchers
+        for p in helpers where p.isRunning {p.terminate()}
+        processLock.unlock()
+        var targets=savedSpecs
+        for b in try load().bottles {
+            let folder=try prefix(b)
+            guard fm.fileExists(atPath:folder.path),fm.isExecutableFile(atPath:runtime(b).path) else{continue}
+            let key=folder.resolvingSymlinksInPath().path
+            if targets[key]==nil {targets[key]=LaunchSpec(executable:runtime(b),arguments:[],directory:folder,environment:try environment(b),log:path("Logs/shutdown.log"))}
+        }
+        var failures:[String]=[]
+        for (folder,spec) in targets.sorted(by:{$0.key<$1.key}) {
+            do {
+                let server=spec.executable.deletingLastPathComponent().appendingPathComponent("wineserver")
+                let active=try shutdownCommand(server,["-k0"],spec.environment,timeout:3)
+                if active==1 {continue} // No server: do not start Wine just to exit it.
+                guard active==0 else{throw OGError.message("无法检查容器状态。")}
+                if !force {
+                    let tasksBeforeShutdown=try windowsTaskNames(spec)
+                    writeShutdownNote("Windows tasks before shutdown: "+tasksBeforeShutdown.sorted().joined(separator:", "))
+                    var accepted=false
+                    do {
+                        let code=try shutdownCommand(spec.executable,["wineboot","--end-session","--kill","--shutdown"],spec.environment,timeout:gracePeriod)
+                        accepted=code==0
+                    } catch {
+                        accepted=try closeResidualSteamHelpers(spec,fallback:tasksBeforeShutdown)
+                        if !accepted {throw error}
+                    }
+                    if !accepted {accepted=try closeResidualSteamHelpers(spec,fallback:tasksBeforeShutdown)}
+                    guard accepted else{throw OGError.message("程序取消了退出，或仍有保存提示。")}
+                }
+                // Windows programs have accepted session end, or the user explicitly
+                // chose Force Quit. Stop residual services and wait for server exit.
+                _ = try shutdownCommand(server,["-k"],spec.environment,timeout:8)
+                guard try shutdownCommand(server,["-w"],spec.environment,timeout:8)==0 else{throw OGError.message("Wine 服务尚未退出。")}
+            } catch {failures.append(URL(fileURLWithPath:folder).lastPathComponent+"："+error.localizedDescription)}
+        }
+        let deadline=Date().addingTimeInterval(3)
+        while (owned+helpers).contains(where:{$0.isRunning}) && Date()<deadline {Thread.sleep(forTimeInterval:0.05)}
+        for p in owned+helpers where p.isRunning {
+            if force {
+                p.terminate()
+                let end=Date().addingTimeInterval(2)
+                while p.isRunning && Date()<end {Thread.sleep(forTimeInterval:0.05)}
+                if p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL);p.waitUntilExit()}
+            } else {failures.append("后台任务尚未退出（PID \(p.processIdentifier)）。")}
+        }
+        if !failures.isEmpty {throw OGError.message(failures.joined(separator:"\n"))}
+        try? fm.removeItem(at:closingMarker)
     }
     func wait(_ p: Process, timeout: TimeInterval=120) throws -> Int32 {
         let deadline=Date().addingTimeInterval(timeout)

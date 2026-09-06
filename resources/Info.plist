@@ -6,6 +6,8 @@
 	<string>OpenGame</string>
 	<key>CFBundleExecutable</key>
 	<string>OpenGame</string>
+	<key>CFBundleIconFile</key>
+	<string>OpenGame.icns</string>
 	<key>CFBundleIdentifier</key>
 	<string>local.opengame.launcher</string>
 	<key>CFBundleName</key>
@@ -13,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.4.1</string>
+	<string>0.4.2</string>
 	<key>CFBundleVersion</key>
-	<string>0.4.1</string>
+	<string>0.4.2</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
