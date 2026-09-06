@@ -22,7 +22,12 @@ static FARPROC version_api(const char *name) {
     return versions ? GetProcAddress(versions,name) : NULL;
 }
 #define PROXY(ret, name, params, args, failure) \
-ret WINAPI OG_##name params { typedef ret (WINAPI *Function) params; Function delegate=(Function)version_api(#name); return delegate ? delegate args : failure; }
+ret WINAPI OG_##name params { \
+    typedef ret (WINAPI *Function) params; \
+    union { FARPROC generic; Function typed; } api; \
+    api.generic=version_api(#name); \
+    return api.typed ? api.typed args : failure; \
+}
 PROXY(BOOL,GetFileVersionInfoA,(LPCSTR a,DWORD b,DWORD c,LPVOID d),(a,b,c,d),FALSE)
 PROXY(BOOL,GetFileVersionInfoW,(LPCWSTR a,DWORD b,DWORD c,LPVOID d),(a,b,c,d),FALSE)
 PROXY(DWORD,GetFileVersionInfoSizeA,(LPCSTR a,LPDWORD b),(a,b),0)

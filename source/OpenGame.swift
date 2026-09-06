@@ -15,12 +15,29 @@ import UniformTypeIdentifiers
     init(){core.resumeLaunches();reload()}
     func reload(){do{try core.ensureCatalog();library=try core.load();runtimeStatus=core.runtimeStatus()}catch{self.error=error.localizedDescription}}
     func perform(_ action:()throws->Void){do{try action();reload()}catch{self.error=error.localizedDescription}}
-    func start(_ spec:LaunchSpec){guard !isQuitting else{return};do{
+    func start(_ spec:LaunchSpec,game:Game?=nil){guard !isQuitting else{return};do{
         let p=try core.start(spec);processes.removeAll{!$0.isRunning};processes.append(p)
-        status=spec.arguments.first.map{URL(fileURLWithPath:$0).lastPathComponent.lowercased()=="steam.exe"} == true ? "Steam 正在启动，首次可能需要约 30 秒；请在弹出的窗口登录。" : "启动请求已发出；可在日志中查看运行结果。"
+        status=spec.arguments.first.map{URL(fileURLWithPath:$0).lastPathComponent.lowercased()=="steam.exe"} == true ? "Steam 正在启动，首次可能需要约 30 秒；请在弹出的窗口登录。" : game.map{"\($0.title) 正在启动…"} ?? "启动请求已发出；可在日志中查看运行结果。"
         p.terminationHandler={ [weak self] process in
             guard process.terminationStatus != 0 && process.terminationStatus != 42 else{return}
-            DispatchQueue.main.async{guard self?.isQuitting != true else{return};self?.status="程序已退出，返回码 \(process.terminationStatus)。请查看 \(spec.log.lastPathComponent)。"}
+            guard let self else{return}
+            if let game {
+                DispatchQueue.global(qos:.userInitiated).async{
+                    // Steam can return a nonzero launcher code while it keeps
+                    // completing the game handshake in the background. Treat
+                    // the real game process as authoritative and keep the UI in
+                    // its startup state for one cold-start window.
+                    let deadline=Date().addingTimeInterval(60)
+                    var running:String?
+                    repeat {
+                        running=try? self.core.nativeRunningGameStatus(game)
+                        if running == nil {Thread.sleep(forTimeInterval:0.5)}
+                    } while running == nil && Date()<deadline
+                    DispatchQueue.main.async{guard !self.isQuitting else{return};self.status=running ?? "程序已退出，返回码 \(process.terminationStatus)。请查看 \(spec.log.lastPathComponent)。"}
+                }
+            } else {
+                DispatchQueue.main.async{guard !self.isQuitting else{return};self.status="程序已退出，返回码 \(process.terminationStatus)。请查看 \(spec.log.lastPathComponent)。"}
+            }
         }
     }catch{self.error=error.localizedDescription}}
     func launch(_ game:Game){
@@ -37,7 +54,7 @@ import UniformTypeIdentifiers
                 switch result {
                 case .success(let (existing,spec)):
                     if let existing=existing {self.status=existing}
-                    else if let spec=spec {self.start(spec)}
+                    else if let spec=spec {self.start(spec,game:game)}
                 case .failure(let error):self.error=error.localizedDescription
                 }
                 DispatchQueue.main.asyncAfter(deadline:.now()+2){self.launching.remove(game.id)}

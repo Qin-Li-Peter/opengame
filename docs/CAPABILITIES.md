@@ -1,8 +1,8 @@
 # OpenGame 与 CrossOver 能力矩阵
 
-| 能力 | OpenGame 0.5.0 | 验收边界 |
+| 能力 | OpenGame 0.5.1 | 验收边界 |
 | --- | --- | --- |
-| 完整运行核心 | 已实现完整 APP 打包，一份 Wine FOSS 核心加 DXMT/DXVK 增量包 | 干净 HOME 可创建 DXMT 容器；仍需第二台实体 Mac 下载验收 |
+| 完整运行核心 | 已实现完整 APP 打包，基础 Wine 与 DXMT 使用各自严格匹配的核心，DXVK 使用增量包 | 干净 HOME 可创建 DXMT 容器；仍需第二台实体 Mac 下载验收 |
 | 安装配方 | 自有 JSON 配方：Steam、VC++ 2015–2026、.NET 4.8 | 官方 HTTPS + SHA-256；没有复制 CrossOver 数据库，厂商更新后需更新哈希 |
 | D3D10/11 | DXMT 0.80 与 DXVK 增量包 | 《渔力全开》DXMT 主菜单和输入已验证；不能外推所有游戏 |
 | D3D12 | Wine/VKD3D 的 `D3D12CreateDevice` x64 探针返回 `S_OK` | 尚无真实 DX12 游戏通过；未达到 CrossOver D3DMetal 水平 |

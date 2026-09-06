@@ -8,16 +8,28 @@ resources="$app/Contents/Resources"
 payload="$resources/Runtime"
 
 test -x "$runtime_root/Engines/WineFOSS11/bin/wine" || { echo "Missing WineFOSS11 in $runtime_root" >&2; exit 1; }
-for renderer in DXMT DXVK; do
-  test -d "$runtime_root/Engines/WineFOSS11-$renderer/lib/wine" || { echo "Missing WineFOSS11-$renderer" >&2; exit 1; }
-done
+test -x "$runtime_root/Engines/WineFOSS11-DXMT/bin/wine" || { echo "Missing complete WineFOSS11-DXMT in $runtime_root" >&2; exit 1; }
+test -d "$runtime_root/Engines/WineFOSS11-DXVK/lib/wine" || { echo "Missing WineFOSS11-DXVK renderer files" >&2; exit 1; }
 
 rm -rf "$payload"
 mkdir -p "$payload/Engines" "$payload/RendererPacks/dxmt" "$payload/RendererPacks/dxvk"
 ditto "$runtime_root/Engines/WineFOSS11" "$payload/Engines/WineFOSS11"
+ditto "$runtime_root/Engines/WineFOSS11-DXMT" "$payload/Engines/WineFOSS11-DXMT"
 if test -d "$runtime_root/Engines/Support"; then
   ditto "$runtime_root/Engines/Support" "$payload/Engines/Support"
 fi
+
+# The known-good DXMT build predates the rebuilt video bridge. These modules
+# are Wine builtins from the same Wine 11 source ABI and use the shared,
+# allowlisted GStreamer runtime bundled below.
+for module in \
+  lib/wine/x86_64-unix/winegstreamer.so \
+  lib/wine/x86_64-windows/winegstreamer.dll \
+  lib/wine/i386-windows/winegstreamer.dll; do
+  test -f "$payload/Engines/WineFOSS11/$module" || { echo "Missing base video bridge: $module" >&2; exit 1; }
+  mkdir -p "$payload/Engines/WineFOSS11-DXMT/$(dirname "$module")"
+  cp -p "$payload/Engines/WineFOSS11/$module" "$payload/Engines/WineFOSS11-DXMT/$module"
+done
 
 for renderer in dxmt dxvk; do
   case "$renderer" in
@@ -38,4 +50,4 @@ cp "$repo/docs/provenance.json" "$payload/provenance.json"
 xattr -cr "$payload" 2>/dev/null || true
 "$repo/scripts/relocate-runtime.py" "$payload"
 "$repo/scripts/audit-runtime.py" "$payload"
-echo "Embedded deduplicated runtime in $app"
+echo "Embedded base Wine and complete DXMT runtime in $app"

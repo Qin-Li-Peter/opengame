@@ -3,7 +3,8 @@
 完整 APP 的 `Contents/Resources/Runtime` 使用以下结构：
 
 ```text
-Engines/WineFOSS11/             一份 Wine 11 + MSync 核心
+Engines/WineFOSS11/             Wine 11 + MSync 基础核心
+Engines/WineFOSS11-DXMT/        与 DXMT 补丁严格匹配的完整核心
 Engines/Support/                GStreamer 等共享运行库
 RendererPacks/dxmt/             DXMT 的 32/64 位 d3d10core、d3d11、dxgi
 RendererPacks/dxvk/             DXVK 的 32/64 位 d3d10core、d3d11、dxgi
@@ -11,9 +12,9 @@ manifest.json
 provenance.json
 ```
 
-OpenGame 优先使用 APP 内核心。开发版没有内置核心时，回退到 `~/Library/Application Support/OpenGame`。旧 WineHQ 容器仍能读取，但所有新容器使用 Wine FOSS 11。
+OpenGame 优先使用 APP 内核心。开发版没有内置核心时，回退到 `~/Library/Application Support/OpenGame`。旧 WineHQ 容器仍能读取，但所有新容器使用 Wine FOSS 11。DXMT 容器从 Steam 到游戏全程使用同一套 DXMT 核心；Steam 的 CEF 只切换 DLL 覆盖规则，不再切换 Wine 进程或 wineserver。
 
-创建或切换容器后，OpenGame 将所选渲染器的六个 DLL 原子安装到容器，并把原文件保存在 `.opengame-renderer-backup`。Steam CEF 使用 Wine 图形路径，游戏按容器选择加载 DXMT 或 DXVK。三个后端不再各自复制完整 Wine 树。
+创建或切换容器后，OpenGame 将所选渲染器的六个 DLL 原子安装到容器，并把原文件保存在 `.opengame-renderer-backup`。每次启动还会校验 DLL 内容，防止 Wine 或 Steam 更新留下错误的渲染器标记。Steam CEF 使用 Wine 图形路径，游戏按容器选择加载 DXMT 或 DXVK。DXMT 的 macOS 侧补丁不能与基础核心混用，因此完整 APP 会额外携带它的匹配核心。
 
 打包过程先运行 `relocate-runtime.py`，把构建目录和 `/opt/local` RPATH 改为 `@loader_path` 或 `@executable_path`，随后由 `audit-runtime.py` 拒绝绝对依赖、逃逸符号链接及私人运行状态。当前核心来自 CodeWeavers 26.3.0 公布的 FOSS 源码；归档哈希、构建开关和已测状态见 `provenance.json` 与 `runtime/BUILDING.md`。
 

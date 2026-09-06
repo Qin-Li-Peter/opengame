@@ -17,6 +17,17 @@ for relative in required_video:
     if not (root / relative).is_file():
         raise SystemExit(f"missing video runtime component: {relative}")
 
+required_dxmt = (
+    "Engines/WineFOSS11-DXMT/bin/wine",
+    "Engines/WineFOSS11-DXMT/bin/wineserver",
+    "Engines/WineFOSS11-DXMT/lib/wine/x86_64-unix/winemetal.so",
+    "Engines/WineFOSS11-DXMT/lib/wine/x86_64-unix/winegstreamer.so",
+    "Engines/WineFOSS11-DXMT/lib/wine/x86_64-windows/winemetal.dll",
+)
+for relative in required_dxmt:
+    if not (root / relative).is_file():
+        raise SystemExit(f"missing complete DXMT runtime component: {relative}")
+
 forbidden_names = {"steam.exe", "loginusers.vdf", "libraryfolders.vdf", "library.json", "system.reg", "user.reg"}
 forbidden_fragments = ("CrossOver.app", "/Prefixes/", "/drive_c/Program Files (x86)/Steam/")
 problems = []

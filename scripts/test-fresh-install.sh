@@ -9,9 +9,9 @@ gst="$runtime/Engines/Support/GStreamer.framework/Versions/1.0"
 test -f "$runtime/Engines/WineFOSS11/lib/wine/x86_64-unix/winegstreamer.so"
 test -f "$runtime/Engines/WineFOSS11/lib/wine/x86_64-windows/winegstreamer.dll"
 test -f "$runtime/Engines/WineFOSS11/lib/wine/i386-windows/winegstreamer.dll"
-GST_PLUGIN_PATH="$gst/lib/gstreamer-1.0" \
-GST_PLUGIN_SYSTEM_PATH="$gst/lib/gstreamer-1.0" \
-DYLD_FALLBACK_LIBRARY_PATH="$gst/lib:/usr/lib" \
+export GST_PLUGIN_PATH="$gst/lib/gstreamer-1.0"
+export GST_PLUGIN_SYSTEM_PATH="$gst/lib/gstreamer-1.0"
+export DYLD_FALLBACK_LIBRARY_PATH="$gst/lib:/usr/lib"
 "$gst/bin/gst-inspect-1.0" decodebin >/dev/null
 "$gst/bin/gst-inspect-1.0" vtdec >/dev/null
 "$gst/bin/gst-launch-1.0" -q videotestsrc num-buffers=24 ! videoconvert ! openh264enc ! h264parse ! vtdec ! fakesink

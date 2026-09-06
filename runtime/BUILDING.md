@@ -1,6 +1,6 @@
 # Building and distributing the runtime
 
-OpenGame full packages use one Wine FOSS core plus small DXMT and DXVK renderer packs. The packager derives the renderer packs from the six DLLs that differ from the base core, so the app does not contain three duplicate Wine trees.
+OpenGame full packages use a Wine FOSS base core, a complete matching DXMT core, and a small DXVK renderer pack. DXMT's Unix-side Metal bridge and Wine build must remain together; treating it as only three Windows DLLs caused launch-order-dependent D3D11 initialization failures. The packager therefore accepts the extra size and audits both complete cores.
 
 ## Inputs
 

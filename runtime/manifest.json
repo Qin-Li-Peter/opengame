@@ -4,8 +4,8 @@
   "architecture": "x86_64-on-Apple-Silicon",
   "minimum_macos": "14.0",
   "components": {
-    "wine": "11.0 with MSync",
-    "dxmt": "0.80",
+    "wine": "11.0 with MSync base runtime",
+    "dxmt": "0.80 with its matching complete Wine/Unix runtime",
     "dxvk": "1.10.3-compatible CrossOver FOSS build",
     "gstreamer": "1.28.1 allowlisted playback runtime with Wine x86_64/i386 bridge",
     "fonts": "Liberation Fonts 2.1.5"
