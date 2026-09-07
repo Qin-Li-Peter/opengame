@@ -17,7 +17,7 @@ import UniformTypeIdentifiers
     func perform(_ action:()throws->Void){do{try action();reload()}catch{self.error=error.localizedDescription}}
     func start(_ spec:LaunchSpec,game:Game?=nil){guard !isQuitting else{return};do{
         let p=try core.start(spec);processes.removeAll{!$0.isRunning};processes.append(p)
-        status=spec.arguments.first.map{URL(fileURLWithPath:$0).lastPathComponent.lowercased()=="steam.exe"} == true ? "Steam 正在启动，首次可能需要约 30 秒；请在弹出的窗口登录。" : game.map{"\($0.title) 正在启动…"} ?? "启动请求已发出；可在日志中查看运行结果。"
+        status=game.map{"\($0.title) 正在启动…"} ?? (spec.arguments.first.map{URL(fileURLWithPath:$0).lastPathComponent.lowercased()=="steam.exe"} == true ? "Steam 正在启动，首次可能需要约 30 秒；请在弹出的窗口登录。" : "启动请求已发出；可在日志中查看运行结果。")
         p.terminationHandler={ [weak self] process in
             guard process.terminationStatus != 0 && process.terminationStatus != 42 else{return}
             guard let self else{return}
@@ -118,25 +118,26 @@ import UniformTypeIdentifiers
         } else {finishQuit(force:false,reply:reply)}
     }
     private func finishQuit(force:Bool,reply:@escaping(Bool)->Void) {
-        status=force ? "正在强制关闭 OpenGame 的运行环境…" : "正在关闭游戏与 Steam；如有保存提示，请先处理。"
+        status=force ? "正在关闭 OpenGame 的运行环境…" : "正在关闭游戏与 Steam…"
         let service=core
         DispatchQueue.global(qos:.userInitiated).async {
-            let result=Result{try service.shutdown(force:force)}
+            let result=Result{
+                if force {try service.shutdown(force:true)}
+                else {
+                    do {try service.shutdown(force:false,gracePeriod:5)}
+                    catch {try service.shutdown(force:true)}
+                }
+            }
             DispatchQueue.main.async {
                 switch result {
                 case .success:reply(true)
                 case .failure(let error):
                     let alert=NSAlert();alert.alertStyle = .warning
-                    alert.messageText="还有程序没有退出"
-                    alert.informativeText=error.localizedDescription+"\n强制退出可能丢失尚未保存的游戏进度。"
-                    alert.addButton(withTitle:"重试退出")
-                    alert.addButton(withTitle:"取消")
-                    alert.addButton(withTitle:"强制退出")
-                    switch alert.runModal() {
-                    case .alertFirstButtonReturn:self.finishQuit(force:false,reply:reply)
-                    case .alertThirdButtonReturn:self.finishQuit(force:true,reply:reply)
-                    default:self.core.resumeLaunches();self.isQuitting=false;self.status="已取消退出。";reply(false)
-                    }
+                    alert.messageText="无法关闭 OpenGame 的运行环境"
+                    alert.informativeText=error.localizedDescription
+                    alert.addButton(withTitle:"确定")
+                    _=alert.runModal()
+                    self.core.resumeLaunches();self.isQuitting=false;self.status="退出失败，请查看 shutdown.log。";reply(false)
                 }
             }
         }

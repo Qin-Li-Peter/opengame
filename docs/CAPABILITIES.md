@@ -1,6 +1,6 @@
 # OpenGame 与 CrossOver 能力矩阵
 
-| 能力 | OpenGame 0.5.1 | 验收边界 |
+| 能力 | OpenGame 0.5.2 | 验收边界 |
 | --- | --- | --- |
 | 完整运行核心 | 已实现完整 APP 打包，基础 Wine 与 DXMT 使用各自严格匹配的核心，DXVK 使用增量包 | 干净 HOME 可创建 DXMT 容器；仍需第二台实体 Mac 下载验收 |
 | 安装配方 | 自有 JSON 配方：Steam、VC++ 2015–2026、.NET 4.8 | 官方 HTTPS + SHA-256；没有复制 CrossOver 数据库，厂商更新后需更新哈希 |

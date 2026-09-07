@@ -367,6 +367,9 @@ final class OpenGameCore: @unchecked Sendable {
             // depend on launch order.
             env=try environment(uiBottle,runtimeURL:wine)
             env["OPENGAME_STEAM_BOTTLE"]=bottle.id
+            env["SteamNoOverlayUI"]="1"
+            env["SteamNoOverlayUIDrawing"]="1"
+            env["DISABLE_VK_LAYER_VALVE_steam_overlay_1"]="1"
             for flag in ["-noverifyfiles","-cef-disable-gpu"] where !actualArguments.contains(flag) {actualArguments.insert(flag,at:1)}
         }
         return LaunchSpec(executable:wine,arguments:actualArguments,directory:directory,environment:env,log:path("Logs/\(safeID).log"))
@@ -374,9 +377,11 @@ final class OpenGameCore: @unchecked Sendable {
     func gameSpec(_ game: Game) throws -> LaunchSpec {
         let lib=try load();guard let b=lib.bottles.first(where:{$0.id==game.bottleID}) else { throw OGError.message("游戏对应的容器不存在。") }
         guard fm.fileExists(atPath:game.executable) else { throw OGError.message("游戏文件已移动或不存在：\(game.executable)") }
-        let launch=try spec(bottle:b,arguments:[game.executable]+game.arguments,directory:URL(fileURLWithPath:game.workingDirectory),logID:game.id)
         if let appID=game.steamID,URL(fileURLWithPath:game.executable).lastPathComponent.lowercased() != "steam.exe" {
             guard !appID.isEmpty,appID.allSatisfy({$0.isASCII && $0.isNumber}) else {throw OGError.message("Steam 游戏编号无效。")}
+            let steam=try prefix(b).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
+            guard fm.fileExists(atPath:steam.path) else{throw OGError.message("未找到 Steam，请先在这个容器中安装 Steam。")}
+            let launch=try spec(bottle:b,arguments:[steam.path,"-applaunch",appID]+game.arguments,directory:steam.deletingLastPathComponent(),logID:game.id)
             var env=launch.environment;env["SteamAppId"]=appID;env["SteamGameId"]=appID;env["OPENGAME_STEAM_BOTTLE"]=b.id
             // Steam's injected D3D overlay requests a cross-process swapchain,
             // which DXMT 0.80 cannot create and can crash Unity during startup.
@@ -387,7 +392,7 @@ final class OpenGameCore: @unchecked Sendable {
             env["DISABLE_VK_LAYER_VALVE_steam_overlay_1"]="1"
             return LaunchSpec(executable:launch.executable,arguments:launch.arguments,directory:launch.directory,environment:env,log:launch.log)
         }
-        return launch
+        return try spec(bottle:b,arguments:[game.executable]+game.arguments,directory:URL(fileURLWithPath:game.workingDirectory),logID:game.id)
     }
     private func prepareSteamLaunchFiles(_ bottle:Bottle) throws {
         let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam")
@@ -439,19 +444,36 @@ final class OpenGameCore: @unchecked Sendable {
         func tasks() -> Set<String> {
             Set(((try? windowsTaskNames(request)) ?? [])+((try? nativeWindowsTaskNames()) ?? []))
         }
-        if tasks().contains("steam.exe"){return}
-        _=try start(request)
-        let deadline=Date().addingTimeInterval(45)
+        let wasRunning=tasks().contains("steam.exe")
+        if !wasRunning {_=try start(request)}
+        let deadline=Date().addingTimeInterval(90)
         var readySnapshots=0
+        var loggedOnSince:Date?
         while Date()<deadline {
             let current=tasks()
-            if current.contains("steam.exe") && (current.contains("steamwebhelper.exe") || current.contains("steamwebhelper_real.exe")) {
+            if current.contains("steam.exe") && (current.contains("steamwebhelper.exe") || current.contains("steamwebhelper_real.exe")) && steamIsLoggedOn(steam.deletingLastPathComponent()) {
+                if loggedOnSince == nil {loggedOnSince=Date()}
                 readySnapshots += 1
-                if readySnapshots>=2 {return}
-            } else {readySnapshots=0}
+                // A second steam.exe invocation can be lost between account
+                // logon and completion of Steam's UI/IPC startup. Existing
+                // clients are already stable; a cold client gets a short
+                // settling window before -applaunch is forwarded.
+                if readySnapshots>=2 && (wasRunning || Date().timeIntervalSince(loggedOnSince!)>=12) {return}
+            } else {readySnapshots=0;loggedOnSince=nil}
             Thread.sleep(forTimeInterval:0.5)
         }
         throw OGError.message("Steam 启动超时，请先打开 Steam 后重试。")
+    }
+    func steamIsLoggedOn(_ steamDirectory:URL) -> Bool {
+        let connectionLog=steamDirectory.appendingPathComponent("logs/connection_log.txt")
+        guard let data=try? Data(contentsOf:connectionLog) else{return false}
+        // The tail can begin in the middle of a multibyte log character. A
+        // lossy UTF-8 decode preserves the ASCII connection-state markers.
+        let text=String(decoding:data.suffix(512*1024),as:UTF8.self)
+        let on=text.range(of:"[Logged On",options:.backwards)?.lowerBound
+        let off=text.range(of:"[Logged Off",options:.backwards)?.lowerBound
+        guard let on else{return false}
+        return off == nil || on > off!
     }
     func runningGameStatus(_ game:Game) throws -> String? {
         // Steam.exe is a launcher shared by many games, not a game identity.

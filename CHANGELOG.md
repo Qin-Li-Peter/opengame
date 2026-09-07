@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2
+
+- Steam 游戏改由已登录的 Steam 客户端通过 `-applaunch` 启动，不再把直接运行 EXE 后由游戏自行重启作为正常路径；启动前同时确认客户端、CEF 和 Steam 网络登录状态，冷启动会等待 IPC 稳定后再转发游戏命令。
+- Steam 主进程也会继承覆盖层隔离设置，避免 `gameoverlayui64.exe` 与 DXMT 游戏窗口争用图形交换链。
+- Command-Q 先给游戏和 Steam 五秒正常结束时间，随后自动关闭 OpenGame 管理的 Wine 会话，不再要求用户二次选择“强制退出”。
+
 ## 0.5.1
 
 - 修正完整包把基础 Wine 与 DXMT Windows DLL 混用的问题。DXMT 现在携带并使用完整匹配核心，Steam CEF 与游戏也始终共用同一 Wine 进程和 wineserver，消除冷启动时随机出现的 D3D11 初始化失败。
