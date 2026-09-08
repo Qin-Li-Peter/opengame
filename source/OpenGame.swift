@@ -47,6 +47,7 @@ import UniformTypeIdentifiers
         DispatchQueue.global(qos:.userInitiated).async{
             let result=Result{() -> (String?,LaunchSpec?) in
                 if let existing=try service.runningGameStatus(game){return(existing,nil)}
+                try service.prepareGameInput(for:game)
                 try service.prepareSteam(for:game)
                 return(nil,try service.gameSpec(game))
             }
@@ -235,7 +236,9 @@ struct ContentView:View{
         .overlay(RoundedRectangle(cornerRadius:12).stroke(selectedGame==game.id ? Color.accentColor.opacity(0.45) : .clear))
         .contentShape(Rectangle())
         .onTapGesture(count:2){selectedGame=game.id;model.launch(game)}
-        .onTapGesture(count:1){selectedGame=game.id}
+        .simultaneousGesture(DragGesture(minimumDistance:0).onChanged{_ in
+            if selectedGame != game.id {selectedGame=game.id}
+        })
         .accessibilityElement(children:.ignore)
         .accessibilityLabel(game.title)
         .accessibilityHint("单击选中，双击启动；已运行时显示原游戏窗口")

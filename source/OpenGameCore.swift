@@ -74,11 +74,11 @@ final class OpenGameCore: @unchecked Sendable {
         return result
     }
     func ensureCatalog() throws {
-        for folder in ["Prefixes", "Logs", "bin", "Engines/SteamCompat"] {
+        for folder in ["Prefixes", "Logs", "bin", "Engines/SteamCompat", "Engines/PointerInput"] {
             try fm.createDirectory(at:path(folder),withIntermediateDirectories:true)
         }
         if let resources=Bundle.main.resourceURL {
-            for (name,target) in [("OpenGameWindow.exe","bin/OpenGameWindow.exe"),("steamwebhelper.exe","Engines/SteamCompat/steamwebhelper.exe"),("steamerrorreporter64.exe","Engines/SteamCompat/steamerrorreporter64.exe")] {
+            for (name,target) in [("OpenGameWindow.exe","bin/OpenGameWindow.exe"),("steamwebhelper.exe","Engines/SteamCompat/steamwebhelper.exe"),("steamerrorreporter64.exe","Engines/SteamCompat/steamerrorreporter64.exe"),("PointerInput/version.dll","Engines/PointerInput/version.dll")] {
                 let source=resources.appendingPathComponent(name)
                 if let data=try? Data(contentsOf:source), (try? Data(contentsOf:path(target))) != data {
                     try data.write(to:path(target),options:.atomic)
@@ -433,6 +433,27 @@ final class OpenGameCore: @unchecked Sendable {
             let current=steam.appendingPathComponent(name),old=steam.appendingPathComponent(oldName)
             if let a=try? Data(contentsOf:current),let b=try? Data(contentsOf:old),a==b {try? fm.removeItem(at:old)}
         }
+    }
+    func prepareGameInput(for game:Game) throws {
+        // Only the verified Unity 6 game receives this compatibility profile.
+        guard game.steamID=="4001890",URL(fileURLWithPath:game.executable).lastPathComponent=="How to Fish.exe" else{return}
+        let library=try load()
+        guard let bottle=library.bottles.first(where:{$0.id==game.bottleID}) else{throw OGError.message("游戏对应的容器不存在。")}
+        let folder=URL(fileURLWithPath:game.executable).deletingLastPathComponent()
+        let adapter=try Data(contentsOf:path("Engines/PointerInput/version.dll"))
+        guard PEIcon.isExecutable(adapter) else{throw OGError.message("鼠标兼容组件无效，请重新安装 OpenGame。")}
+        let target=folder.appendingPathComponent("version.dll")
+        if fm.fileExists(atPath:target.path) {
+            let existing=try Data(contentsOf:target)
+            let digest=SHA256.hash(data:existing).map{String(format:"%02x",$0)}.joined()
+            // Original OpenGame input adapter shipped before reproducible builds.
+            let legacy="fc735b5ef3a064768ee29064807bf2ac911234b0a43767b01b16a70f1cdb7671"
+            guard existing==adapter || digest==legacy else{throw OGError.message("游戏目录已有不同的 version.dll，未覆盖；请先检查游戏兼容组件。")}
+        } else {try adapter.write(to:target,options:.atomic)}
+        let args=["reg","add","HKCU\\Software\\Wine\\AppDefaults\\How to Fish.exe\\DllOverrides","/v","version","/t","REG_SZ","/d","native,builtin","/f"]
+        let operation=try spec(bottle:bottle,arguments:args,directory:folder,logID:"input-"+game.id)
+        let process=try start(operation)
+        guard try wait(process,timeout:10)==0 else{throw OGError.message("无法启用游戏鼠标兼容组件，详情见日志。")}
     }
     func prepareSteam(for game:Game) throws {
         guard game.steamID != nil,URL(fileURLWithPath:game.executable).lastPathComponent.lowercased() != "steam.exe" else{return}
