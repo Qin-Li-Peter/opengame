@@ -1,0 +1,13 @@
+--- a/dlls/ntdll/unix/socket.c
++++ b/dlls/ntdll/unix/socket.c
+@@ -428,6 +428,10 @@
+ #endif /* IP_PKTINFO */
+ 
+ #if defined(IP_TOS)
++#if defined(__APPLE__) && defined(IP_RECVTOS) && IP_RECVTOS != IP_TOS
++                    /* Darwin uses the receive option as its ancillary type. */
++                    case IP_RECVTOS:
++#endif
+                     case IP_TOS:
+                     {
+                         INT tos = *(unsigned char *)CMSG_DATA(cmsg_unix);

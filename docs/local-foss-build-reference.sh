@@ -7,6 +7,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 repository="$(cd "$here/.." && pwd)"
 workspace="${OG_BUILD_WORKSPACE:-$repository}"
 cd "$workspace"
+"$repository/scripts/apply-wine-patches.sh" "$workspace/work/crossover-foss/sources/wine"
 python3 - <<'PY'
 from pathlib import Path
 import shutil,subprocess

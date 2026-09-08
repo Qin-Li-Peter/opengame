@@ -12,8 +12,28 @@
   },
   "renderers": {
     "wine": [],
-    "dxmt": ["d3d10core.dll", "d3d11.dll", "dxgi.dll"],
-    "dxvk": ["d3d10core.dll", "d3d11.dll", "dxgi.dll"]
+    "dxmt": [
+      "d3d10core.dll",
+      "d3d11.dll",
+      "dxgi.dll"
+    ],
+    "dxvk": [
+      "d3d10core.dll",
+      "d3d11.dll",
+      "dxgi.dll"
+    ]
   },
-  "excluded": ["Steam", "games", "prefixes", "user data", "Microsoft fonts", "D3DMetal", "CrossOver proprietary recipes", "GStreamer GPL/restricted/DVD plugins"]
+  "excluded": [
+    "Steam",
+    "games",
+    "prefixes",
+    "user data",
+    "Microsoft fonts",
+    "D3DMetal",
+    "CrossOver proprietary recipes",
+    "GStreamer GPL/restricted/DVD plugins"
+  ],
+  "wine_patches": [
+    "darwin-ip-recvtos"
+  ]
 }

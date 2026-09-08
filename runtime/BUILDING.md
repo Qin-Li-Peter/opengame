@@ -12,6 +12,10 @@ The GStreamer SDK is assembled outside the repository so its 4+ GB development t
 
 For the distributable playback runtime, expand the official runtime package and run `scripts/stage-gstreamer-runtime.sh EXPANDED_PKG RUNTIME_ROOT`. This script uses `runtime/gstreamer-components.txt` as an allowlist and refuses known GPL/restricted plugin files. The selected runtime still includes OpenH264 and Apple VideoToolbox, which the fresh-install test uses for an actual H.264 pipeline. Source packaging also parses every GStreamer `subprojects/*.wrap`, downloads each pinned archive, verifies its upstream hash, and includes the resulting source set with the release.
 
+## Local Wine patches
+
+Apply `scripts/apply-wine-patches.sh WINE_SOURCE_DIRECTORY` before building either core. The historical build recipe now includes this step. Version 0.5.5 requires `runtime/patches/darwin-ip-recvtos.patch`; prebuilt runtimes from older releases do not contain the fix. Compile and run `tests/diagnostics/udp-tos.c` against every staged core before packaging. See `docs/STEAM-NETWORK-FREEZE.md` for the failure and validation.
+
 ## Full package
 
 ```sh
