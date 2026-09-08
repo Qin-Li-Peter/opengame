@@ -20,7 +20,7 @@ Apply `scripts/apply-wine-patches.sh WINE_SOURCE_DIRECTORY` before building eith
 
 ```sh
 scripts/build.sh
-scripts/package-full.sh "$HOME/Library/Application Support/OpenGame"
+scripts/package-full.sh /path/to/audited-runtime-root
 ```
 
 The command audits symlinks, user data, absolute Mach-O dependencies, and renderer pack completeness. It creates a full app archive and a separate corresponding-source archive in `dist/`.

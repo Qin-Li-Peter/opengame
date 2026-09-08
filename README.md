@@ -1,63 +1,119 @@
 # OpenGame
 
-macOS 上的原生 Windows 游戏管理器。SwiftUI 启动器支持 Wine、DXVK、DXMT，以及实验性的 Wine FOSS 11 + MSync 核心。
+**在 Apple Silicon Mac 上安装、管理和运行 Windows 游戏。**
 
-仓库同时支持轻量启动器构建和带运行核心的完整 APP 构建。完整包携带 Wine FOSS 11 基础核心、与 DXMT 严格匹配的完整核心、DXVK 增量包和视频运行库，不读取用户的 Steam、游戏、存档或容器。默认 CI 快速构建启动器；正式 Release 工作流验证运行时哈希、动态依赖、干净用户目录、Developer ID 签名和 Apple 公证。
+OpenGame 为 Mac 提供图形化的 Windows 游戏运行环境。你可以安装 Windows 版 Steam、下载自己拥有的游戏，也可以添加已有的 Windows 游戏，在同一个游戏库中双击启动。
 
-## 功能
+完整安装包已包含所需运行库，无需安装 CrossOver，也无需自己编译。游戏、Steam 账号和存档由你自行准备。
 
-- 创建与复制容器、导入 EXE、运行 EXE/MSI 安装器。
-- 扫描默认 Steam 库、保存启动参数、工作目录和游戏原始图标。
-- 新容器默认使用 Wine FOSS 11、DXMT 和 MSync；旧 WineHQ 容器仍可兼容读取。
-- Steam CEF 参数包装器、DXMT 覆盖层隔离、静默错误报告兼容程序、重复启动检查和逐游戏日志。
-- 原生应用图标；Command-Q 会先请求游戏和 Steam 正常退出，再结束各 OpenGame 容器的 Wine 服务。
-- 从官方地址下载并校验 Steam、VC++ 2015–2026 和 .NET Framework 4.8 安装配方。
-- 导出、检查、恢复 `.opengamebottle` 容器归档，可迁移容器内的游戏入口。
-- 新安装从空游戏库开始；已有游戏库保持原样。游戏图标从用户自己的 EXE/库中提取。
+**[下载 OpenGame 0.5.7 内测版](https://github.com/Qin-Li-Peter/opengame/releases/tag/v0.5.7)** · [安装与配置](#安装与配置) · [常见问题](#常见问题)
 
-## 本地构建
+> OpenGame 目前处于内测阶段，兼容性因游戏而异。建议先用一款游戏测试，再迁移自己的游戏库。
 
-需要 Apple Silicon Mac、Xcode Command Line Tools，以及 LLVM-MinGW Windows x64 编译器。CI 固定使用 llvm-mingw 20260826 并校验官方 SHA-256。
+## 可以做什么
 
-```sh
-export OG_MINGW_CC=/path/to/llvm-mingw/bin/x86_64-w64-mingw32-gcc
-scripts/test.sh
-scripts/build.sh
-scripts/package.sh
-```
+- 在 Mac 上安装 Windows 版 Steam，并管理已安装的 Steam 游戏。
+- 安装 EXE / MSI 程序，或添加已有游戏的 EXE 文件。
+- 使用游戏本身的图标展示游戏库：单击选中，双击启动。
+- 为不同游戏创建独立运行环境，调整图形设置，导出和恢复环境备份。
+- 退出 OpenGame 时，一并结束其容器中的游戏、Steam 和 Wine 进程。
 
-维护者从已审计的核心生成可直接运行的 APP：
+## 使用前准备
 
-```sh
-scripts/package-full.sh "$HOME/Library/Application Support/OpenGame"
-```
+| 项目 | 要求 |
+| --- | --- |
+| Mac | Apple Silicon（M 系列芯片）；当前安装包不适用于 Intel Mac |
+| 系统 | macOS 14 或更新版本；目前主要在 M3 实机验证 |
+| Rosetta | Wine 运行库需要 Rosetta，按 macOS 提示安装；见 [Apple 安装说明](https://support.apple.com/zh-cn/102527) |
+| 磁盘 | 完整 ZIP 约 1.4 GB，解压后应用约 4 GB；另需容器和游戏所占空间 |
+| 网络与账号 | 安装 Steam、下载游戏和在线游玩需要联网；使用你自己的 Steam 账号 |
 
-应用位于 `build/OpenGame.app`，压缩包和校验和位于 `dist/`。普通 `package.sh` 生成启动器；`package-full.sh` 从已审计的运行时目录生成完整 APP 和对应源码包。输出为 Apple Silicon arm64，最低部署目标 macOS 14；当前实机验证覆盖 macOS 26.6.2 / M3。
+当前仓库为私有仓库。下载前，请让仓库所有者邀请你的 GitHub 账号；接受邀请并登录后才能访问。如果页面显示 404，先检查账号及访问权限。
 
-GitHub Actions 在推送、PR、版本标签和手动触发时构建，产物保留 14 天。工作流只有只读仓库权限，不会自动公开仓库或发布 Release。
+## 安装与配置
 
-## 已有开发环境如何使用
+### 1. 下载并安装 OpenGame
 
-将 `OpenGame.app` 放到个人 `Applications` 目录。运行目录是当前用户的 `~/Library/Application Support/OpenGame`。首次启动会建立空游戏库并安装应用自带的两个小型 Windows 辅助程序；已有配置不会被初始化覆盖。CLI 位于应用包的 `Contents/MacOS/OpenGameCLI`。
+1. 打开 [当前版本下载页](https://github.com/Qin-Li-Peter/opengame/releases/tag/v0.5.7)。
+2. 下载 **`OpenGame-0.5.7-macos-arm64.zip`**。这是包含运行库的完整应用；页面上的 Source code 和 corresponding-source 是源码，不是安装包。
+3. 解压，将 **OpenGame.app** 拖到 Mac 的“应用程序”文件夹，然后从那里打开。
 
-运行引擎目录约定见 [RUNTIME.md](docs/RUNTIME.md)，完整构建命令见 [BUILDING.md](runtime/BUILDING.md)。
+当前内测包尚未经过 Apple 公证。如果 macOS 提示无法验证开发者，请先确认文件来自本仓库，再按 [Apple 官方说明](https://support.apple.com/zh-cn/102445)：尝试打开后，在“系统设置 → 隐私与安全性”中选择“仍要打开”。如果提示文件损坏或含恶意软件，请先停止打开、重新下载并向维护者反馈。
 
-## 发布给朋友
+### 2. 创建游戏环境
 
-[分发说明](docs/DISTRIBUTION.md) 区分 Actions 编译产物与 Release 下载包。私有仓库的源码及 Release 仅对有访问权限的人开放。
+点击 **新建容器**，名称可以填写 `Steam`，保留默认设置后点击 **创建**。
 
-正式工作流已经实现 Developer ID 签名、`notarytool` 提交和 stapling。实际签名需要仓库所有者配置 Apple Developer 证书及公证 API 密钥；没有这些凭据生成的本地包仍是临时签名预览版。
+“容器”就是一个独立的 Windows 游戏环境，存放该环境的程序、设置和部分存档。第一次使用只需创建一个；以后遇到需要不同设置的游戏，可以再创建新容器。
 
-## 测试与限制
+默认图形设置为 **DXMT**，先使用默认值即可。
 
-仓库测试覆盖空白首次启动、旧目录保留以及 Wine 家族路由。32/64 位窗口 Present、HTTPS 的诊断源码在 docs。此前同一微基准的五轮中位数见 [micro-summary.json](docs/micro-summary.json)：新核心四项耗时与 CrossOver DXMT + MSync 相差约 5% 以内，不能推导全部游戏或真实 FPS 等效。
+### 3. 安装并登录 Steam
 
-Wine/VKD3D 的 x64 `D3D12CreateDevice` 探针已返回 `S_OK`，但尚未通过真实 DX12 游戏验收，不能标为与 CrossOver 的 D3DMetal 等效。Apple D3DMetal、CrossOver 专有配方和兼容数据库不进入本仓库。Wine 已用 GStreamer 1.28.1 重新编译，完整包同时包含 64 位 Unix 桥接、64/32 位 Windows 模块和白名单播放插件；自动验收会运行 OpenH264→VideoToolbox 流水线，真实游戏过场仍需逐款验证。Steam 的 64 位错误报告辅助程序在 Wine 下会自行崩溃，OpenGame 会备份原文件并用原创静默程序接管；其它游戏、联机与长期稳定性需要逐项验证。详见 [能力矩阵](docs/CAPABILITIES.md)。
+1. 选中刚创建的容器，点击 **安装组件**。
+2. 选择 **Steam**，点击 **下载并安装**，完成弹出的安装向导。
+3. 点击工具栏的 **Steam**，在窗口中登录自己的账号，完成 Steam Guard 验证。
+4. 在这个 Windows 版 Steam 中下载自己拥有的游戏。
 
-Command-Q 会先请求游戏和 Steam 正常退出，再清理本应用容器中的残留进程；若正常退出失败会自动强制结束，请先保存游戏。退出清理按容器与运行库路径限定范围，不操作其他 Wine 环境。
+第一次初始化或 Steam 更新可能需要几分钟。Mac 原生 Steam 中安装的 macOS 游戏不会自动变成这个容器中的 Windows 游戏，需要在此处安装 Windows 版本。
 
-## 许可证
+### 4. 将游戏加入 OpenGame 并启动
 
-原创启动器与脚本为 MIT。Steam CEF 包装器来自 MIT 项目，保留原许可证及来源提交，见 `source/steam-wrapper/`。Wine、DXVK、DXMT 和其他依赖遵循各自许可证，详见 [THIRD_PARTY.md](docs/THIRD_PARTY.md)。仓库不包含 Steam 客户端、游戏内容、第三方游戏图标、D3DMetal 或 CrossOver 专有二进制。Release 的完整 APP 可包含允许再分发的 FOSS 二进制，并同时提供完整对应源码包。
+游戏在 Steam 中安装完成后，回到 OpenGame，选中对应容器，打开 **容器工具 → 扫描已安装的 Steam 游戏**。
 
-朋友下载安装与游玩请阅读 [使用指南](docs/FRIENDS.md)。
+游戏出现后，**单击卡片选中，双击卡片启动**。Steam 游戏会通过对应容器的 Steam 客户端启动；首次使用请确认 Steam 已完成登录。
+
+退出前先保存游戏。按 **Command-Q** 退出 OpenGame 时，会一并结束其容器中的游戏和 Steam；正常退出失败时会清理残留进程。
+
+## 安装其他 Windows 游戏
+
+- **有安装程序：** 选中目标容器，点击 **运行安装程序**，选择 EXE 或 MSI 并完成安装；随后通过 **添加游戏** 选择安装后的游戏 EXE。
+- **已有完整游戏文件夹：** 点击 **添加游戏**，选择游戏 EXE 和要使用的容器。保留整个游戏文件夹；添加入口不会复制游戏文件。
+- **提示缺少运行库：** 在目标容器中打开 **安装组件**，按游戏要求安装 Visual C++ 或 .NET 等组件。
+
+请使用自己拥有或获授权的游戏文件。
+
+## 更新 OpenGame
+
+1. 保存游戏并退出 OpenGame，等待游戏和 Steam 关闭。
+2. 从下载页获取新版本，解压后替换“应用程序”中的 OpenGame.app。
+3. 重新打开应用。游戏库和容器存放在 `~/Library/Application Support/OpenGame`，更换应用本身不会删除这些数据。
+
+重要容器可以先通过 **容器工具 → 导出容器归档** 备份。放在容器外部的游戏文件需要另行备份。
+
+## 常见问题
+
+**游戏库为什么是空的？**
+
+新安装不会附带游戏。先在容器内安装 Steam 和游戏，再扫描已安装的 Steam 游戏；其他游戏使用“添加游戏”。
+
+**单击游戏为什么没有运行？**
+
+单击用于选中，双击才会启动。
+
+**Steam 黑屏、一直连接，或游戏没有响应怎么办？**
+
+先确认 Steam 已登录并完成更新。若持续无响应，记录出现问题的操作，从 OpenGame 工具栏的 **日志** 打开相关日志，并向维护者反馈。不要连续双击尝试启动多个副本。
+
+**帧率低怎么办？**
+
+先降低游戏分辨率和画质，关闭其他高负载程序。默认使用 DXMT；如需试用其他图形后端，可在 **容器工具 → 容器设置与图形后端** 中更改。不同游戏的效果不同。
+
+**语音没有声音怎么办？**
+
+检查 macOS“系统设置 → 隐私与安全性 → 麦克风”中的 OpenGame 权限，以及游戏内的输入设备设置。当前语音和联机功能仍需逐款验证。
+
+## 兼容性与已知问题
+
+- 当前以 DirectX 10/11 游戏为主要尝试对象。不能保证所有 Windows 游戏运行，也不能保证达到 CrossOver 的性能。
+- DirectX 12 游戏及依赖内核级反作弊的游戏不在当前支持范围内。
+- 《渔力全开》已有 Steam 登录、菜单和输入的使用验证；**创建房间曾出现卡住，联机和语音仍未完成完整复测**。
+- 当前安装包尚未 Apple 公证，也尚未完成第二台全新 Mac 的完整游玩验收。
+
+遇到问题，请通过 [Issues](https://github.com/Qin-Li-Peter/opengame/issues) 或联系维护者，提供 Mac 型号、macOS / OpenGame 版本、游戏名称、复现步骤、截图和相关日志。分享前删去账号、令牌等个人信息。
+
+## 项目信息
+
+OpenGame 启动器与原创脚本采用 MIT 许可证，运行库遵循各自许可证。项目不附带 Steam 账号、游戏内容或 CrossOver 专有组件。每个完整 Release 同时提供运行库对应源码。
+
+[更新记录](https://github.com/Qin-Li-Peter/opengame/blob/main/CHANGELOG.md) · [开发与构建](https://github.com/Qin-Li-Peter/opengame/blob/main/docs/DEVELOPMENT.md) · [第三方组件](https://github.com/Qin-Li-Peter/opengame/blob/main/docs/THIRD_PARTY.md) · [许可证](LICENSE)

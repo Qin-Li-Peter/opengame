@@ -20,3 +20,11 @@
 当前已完成去重运行时打包、绝对依赖修复、对应源码包、配方、容器迁移和干净 HOME 验收。Apple 凭据和第二台干净实体 Mac 验收仍需仓库所有者完成。不要上传整个 `Application Support/OpenGame`，其中可能有账号、游戏和存档；`package-full.sh` 只选择 `Engines` 中的白名单文件并执行审计。
 
 参考：[GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)、[GNU LGPL 2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html)、[Apple 分发与公证](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
+
+## Release 页面约定
+
+- 当前下载入口在 README 顶部，明确指向一个已发布版本；当前为 0.5.7 内测版。
+- 保留内测标记。GitHub 不允许将 Pre-release 设为 Latest，不要为获得 Latest 标签而将未完成验收的版本改为正式版。
+- 旧完整包标为“历史内测版”，保留附件和标签供回退；旧启动器草稿标为“归档草稿”，不再用于下载安装。
+- 页面开头直接链接完整安装 ZIP；源码和校验说明放入折叠区。附件用显示标签解释用途，保留文件名以免破坏下载地址和校验清单。
+- 当前发布文案保存在 `docs/releases/`。README 是普通用户的主要说明，开发与构建步骤放在 `docs/DEVELOPMENT.md`。
