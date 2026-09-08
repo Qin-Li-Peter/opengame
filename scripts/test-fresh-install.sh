@@ -43,6 +43,9 @@ if test -n "${OG_MINGW_CC:-}"; then
     OPENGAME_ROOT="$root" "$cli" probe "$id" "$test_home/winegstreamer-smoke32.exe"
     grep -q 'WINEGSTREAMER_LOAD=OK' "$root/Logs/probe-$id-winegstreamer-smoke32.exe.log"
   fi
+  echo "PASS: D3D12 device and Wine GStreamer DLL probes"
+else
+  echo "SKIP: D3D12 and Wine DLL probes (OG_MINGW_CC unset)"
 fi
 WINEPREFIX="$prefix" "$runtime/Engines/WineFOSS11-DXMT/bin/wineserver" -k
 WINEPREFIX="$prefix" "$runtime/Engines/WineFOSS11-DXMT/bin/wineserver" -w
@@ -54,4 +57,4 @@ OPENGAME_ROOT="$root" "$cli" export-bottle "$id" "$archive"
 restored=$(OPENGAME_ROOT="$root" "$cli" import-bottle "$archive" "Restored Test")
 OPENGAME_ROOT="$root" "$cli" list | grep -q "$restored"
 test -f "$root/Prefixes/$restored/system.reg"
-echo "PASS: bundled runtime, GStreamer discovery and Wine bridge, clean data root, bottle creation, fonts, recipes, D3D12 device probe, archive export and restore"
+echo "PASS: bundled runtime, GStreamer discovery and video pipeline, clean data root, bottle creation, fonts, recipes, archive export and restore"
