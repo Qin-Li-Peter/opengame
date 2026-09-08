@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 @MainActor final class AppModel: ObservableObject {
     let core=OpenGameCore()
     @Published var library=Library(bottles:[],games:[])
-    @Published var status="点击游戏图标或“运行”启动游戏；已运行的游戏会尝试显示原窗口。"
+    @Published var status="单击选中游戏，双击启动；已运行的游戏会尝试显示原窗口。"
     @Published var error:String?
     @Published var busy=false
     @Published var isQuitting=false
@@ -224,6 +224,29 @@ struct ContentView:View{
         let panel=NSOpenPanel();panel.canChooseDirectories=false;panel.allowsMultipleSelection=false;panel.allowedContentTypes=[UTType(filenameExtension:"opengamebottle") ?? .data]
         panel.begin{response in if response == .OK,let url=panel.url{model.importBottle(from:url)}}
     }
+    private func gameCard(_ game:Game)->some View {
+        VStack(spacing:10){
+            GameIcon(core:model.core,game:game,size:80)
+            Text(game.title).font(.headline).lineLimit(2).multilineTextAlignment(.center).frame(height:36)
+            Text(model.library.bottles.first{$0.id==game.bottleID}?.name ?? "").font(.caption).foregroundStyle(.secondary)
+        }.frame(maxWidth:.infinity).padding(.vertical,16)
+        .background(selectedGame==game.id ? Color.accentColor.opacity(0.12) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius:12))
+        .overlay(RoundedRectangle(cornerRadius:12).stroke(selectedGame==game.id ? Color.accentColor.opacity(0.45) : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture(count:2){selectedGame=game.id;model.launch(game)}
+        .onTapGesture(count:1){selectedGame=game.id}
+        .accessibilityElement(children:.ignore)
+        .accessibilityLabel(game.title)
+        .accessibilityHint("单击选中，双击启动；已运行时显示原游戏窗口")
+        .accessibilityIdentifier("launch-"+game.id)
+        .contextMenu{
+            Button("游戏设置"){editGame=game}
+            Button("打开所在文件夹"){model.show(URL(fileURLWithPath:game.workingDirectory))}
+            Divider()
+            Button("从列表移除（保留文件）"){model.perform{try model.core.removeGame(game.id)}}
+        }
+    }
     var body:some View{
         NavigationSplitView{
             List(selection:$selectedBottle){
@@ -281,29 +304,7 @@ struct ContentView:View{
                     }else{
                         LazyVGrid(columns:[GridItem(.adaptive(minimum:160,maximum:210),spacing:18)],spacing:20){
                             ForEach(games){game in
-                                Button {selectedGame=game.id;model.launch(game)} label: {
-                                VStack(spacing:10){
-                                    GameIcon(core:model.core,game:game,size:80)
-                                    Text(game.title).font(.headline).lineLimit(2).multilineTextAlignment(.center).frame(height:36)
-                                    Text(model.library.bottles.first{$0.id==game.bottleID}?.name ?? "").font(.caption).foregroundStyle(.secondary)
-                                    Label("运行",systemImage:"play.fill").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
-                                }.frame(maxWidth:.infinity).padding(.vertical,16)
-                                .background(selectedGame==game.id ? Color.accentColor.opacity(0.12) : Color.clear)
-                                .clipShape(RoundedRectangle(cornerRadius:12))
-                                .overlay(RoundedRectangle(cornerRadius:12).stroke(selectedGame==game.id ? Color.accentColor.opacity(0.45) : .clear))
-                                .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("启动 "+game.title)
-                                .accessibilityHint("已运行时显示原游戏窗口")
-                                .accessibilityIdentifier("launch-"+game.id)
-                                .contextMenu{
-                                    Button("运行"){model.launch(game)}
-                                    Button("游戏设置"){editGame=game}
-                                    Button("打开所在文件夹"){model.show(URL(fileURLWithPath:game.workingDirectory))}
-                                    Divider()
-                                    Button("从列表移除（保留文件）"){model.perform{try model.core.removeGame(game.id)}}
-                                }
+                                gameCard(game)
                             }
                         }.padding(24)
                     }
@@ -315,7 +316,6 @@ struct ContentView:View{
                         VStack(alignment:.leading,spacing:4){Text(game.title).font(.headline);Text(game.note).font(.caption).foregroundStyle(.secondary)}
                         Spacer()
                         Button("设置"){editGame=game}
-                        Button("运行",systemImage:"play.fill"){model.launch(game)}.buttonStyle(.borderedProminent).controlSize(.large)
                     }.padding(18)
                 }else{Text("新游戏的兼容性需要分别验证；不支持的反作弊或图形接口可能阻止运行。").font(.caption).foregroundStyle(.secondary).padding(18)}
                 HStack{if model.busy{ProgressView().controlSize(.small)};VStack(alignment:.leading,spacing:2){Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(2);Text(model.runtimeStatus).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)};Spacer()}.padding(.horizontal,18).padding(.bottom,12)
