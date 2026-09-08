@@ -20,9 +20,9 @@ if "$gst/bin/gst-inspect-1.0" x264enc >/dev/null 2>&1; then
   exit 1
 fi
 
-home=$(mktemp -d)
-trap 'rm -rf "$home"' EXIT
-root="$home/OpenGame"
+test_home=$(mktemp -d)
+trap 'rm -rf "$test_home"' EXIT
+root="$test_home/OpenGame"
 status=$(OPENGAME_ROOT="$root" "$cli" runtime-status)
 case "$status" in *"OpenGame.app"*"DXMT / DXVK"*) ;; *) echo "Unexpected runtime status: $status" >&2; exit 1;; esac
 id=$(OPENGAME_ROOT="$root" "$cli" create "Fresh Install Test" dxmt foss)
@@ -31,23 +31,25 @@ test -f "$prefix/.opengame-fonts"
 test "$(find "$prefix/drive_c/windows/Fonts" -name 'Liberation*.ttf' | wc -l | tr -d ' ')" = 12
 OPENGAME_ROOT="$root" "$cli" recipes | grep -q '^steam'
 if test -n "${OG_MINGW_CC:-}"; then
-  "$OG_MINGW_CC" docs/d3d12.c -O2 -Wall -Wextra -Werror -ld3d12 -ldxgi -o "$home/d3d12-smoke.exe"
-  OPENGAME_ROOT="$root" "$cli" probe "$id" "$home/d3d12-smoke.exe"
+  "$OG_MINGW_CC" docs/d3d12.c -O2 -Wall -Wextra -Werror -ld3d12 -ldxgi -o "$test_home/d3d12-smoke.exe"
+  OPENGAME_ROOT="$root" "$cli" probe "$id" "$test_home/d3d12-smoke.exe"
   grep -q 'D3D12_CREATE_DEVICE=00000000' "$root/Logs/probe-$id-d3d12-smoke.exe.log"
-  "$OG_MINGW_CC" docs/winegstreamer-smoke.c -O2 -Wall -Wextra -Werror -o "$home/winegstreamer-smoke64.exe"
-  OPENGAME_ROOT="$root" "$cli" probe "$id" "$home/winegstreamer-smoke64.exe"
+  "$OG_MINGW_CC" docs/winegstreamer-smoke.c -O2 -Wall -Wextra -Werror -o "$test_home/winegstreamer-smoke64.exe"
+  OPENGAME_ROOT="$root" "$cli" probe "$id" "$test_home/winegstreamer-smoke64.exe"
   grep -q 'WINEGSTREAMER_LOAD=OK' "$root/Logs/probe-$id-winegstreamer-smoke64.exe.log"
   mingw32="$(dirname "$OG_MINGW_CC")/i686-w64-mingw32-gcc"
   if test -x "$mingw32"; then
-    "$mingw32" docs/winegstreamer-smoke.c -O2 -Wall -Wextra -Werror -o "$home/winegstreamer-smoke32.exe"
-    OPENGAME_ROOT="$root" "$cli" probe "$id" "$home/winegstreamer-smoke32.exe"
+    "$mingw32" docs/winegstreamer-smoke.c -O2 -Wall -Wextra -Werror -o "$test_home/winegstreamer-smoke32.exe"
+    OPENGAME_ROOT="$root" "$cli" probe "$id" "$test_home/winegstreamer-smoke32.exe"
     grep -q 'WINEGSTREAMER_LOAD=OK' "$root/Logs/probe-$id-winegstreamer-smoke32.exe.log"
   fi
 fi
+WINEPREFIX="$prefix" "$runtime/Engines/WineFOSS11-DXMT/bin/wineserver" -k
+WINEPREFIX="$prefix" "$runtime/Engines/WineFOSS11-DXMT/bin/wineserver" -w
 # Runtime creation was exercised above. Keep the archive phase small so CI
 # tests archive semantics instead of spending minutes compressing Wine's stock C: tree.
 find "$prefix" -mindepth 1 ! -name system.reg -exec rm -rf {} +
-archive="$home/Fresh.opengamebottle"
+archive="$test_home/Fresh.opengamebottle"
 OPENGAME_ROOT="$root" "$cli" export-bottle "$id" "$archive"
 restored=$(OPENGAME_ROOT="$root" "$cli" import-bottle "$archive" "Restored Test")
 OPENGAME_ROOT="$root" "$cli" list | grep -q "$restored"

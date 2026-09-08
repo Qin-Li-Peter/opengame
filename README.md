@@ -54,8 +54,10 @@ GitHub Actions 在推送、PR、版本标签和手动触发时构建，产物保
 
 Wine/VKD3D 的 x64 `D3D12CreateDevice` 探针已返回 `S_OK`，但尚未通过真实 DX12 游戏验收，不能标为与 CrossOver 的 D3DMetal 等效。Apple D3DMetal、CrossOver 专有配方和兼容数据库不进入本仓库。Wine 已用 GStreamer 1.28.1 重新编译，完整包同时包含 64 位 Unix 桥接、64/32 位 Windows 模块和白名单播放插件；自动验收会运行 OpenH264→VideoToolbox 流水线，真实游戏过场仍需逐款验证。Steam 的 64 位错误报告辅助程序在 Wine 下会自行崩溃，OpenGame 会备份原文件并用原创静默程序接管；其它游戏、联机与长期稳定性需要逐项验证。详见 [能力矩阵](docs/CAPABILITIES.md)。
 
-退出时若程序拒绝 Windows 会话结束，OpenGame 会保持运行并给出“重试／取消／强制退出”。只有明确选择强制退出才会跳过保存保护。Steam 正常退出后偶发残留的 CEF／错误报告辅助进程会自动清理，不再把它误报为游戏拒绝退出。退出逻辑严格限定在 OpenGame 的 `Prefixes` 目录，不操作 CrossOver 或其它 Wine 环境。
+Command-Q 会先请求游戏和 Steam 正常退出，再清理本应用容器中的残留进程；若正常退出失败会自动强制结束，请先保存游戏。退出清理按容器与运行库路径限定范围，不操作其他 Wine 环境。
 
 ## 许可证
 
 原创启动器与脚本为 MIT。Steam CEF 包装器来自 MIT 项目，保留原许可证及来源提交，见 `source/steam-wrapper/`。Wine、DXVK、DXMT 和其他依赖遵循各自许可证，详见 [THIRD_PARTY.md](docs/THIRD_PARTY.md)。仓库不包含 Steam 客户端、游戏内容、第三方游戏图标、D3DMetal 或 CrossOver 专有二进制。Release 的完整 APP 可包含允许再分发的 FOSS 二进制，并同时提供完整对应源码包。
+
+朋友下载安装与游玩请阅读 [使用指南](docs/FRIENDS.md)。

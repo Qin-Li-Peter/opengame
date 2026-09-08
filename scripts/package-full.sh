@@ -16,7 +16,7 @@ ditto build/OpenGame.app "dist/$package/OpenGame.app"
 scripts/embed-runtime.sh "dist/$package/OpenGame.app" "$runtime_root"
 scripts/install-font-pack.sh "dist/$package/OpenGame.app/Contents/Resources/Runtime" "$source_directory"
 scripts/audit-runtime.py "dist/$package/OpenGame.app/Contents/Resources/Runtime"
-cp README.md CHANGELOG.md LICENSE docs/DISTRIBUTION.md docs/THIRD_PARTY.md "dist/$package/"
+cp README.md CHANGELOG.md LICENSE docs/DISTRIBUTION.md docs/THIRD_PARTY.md docs/FRIENDS.md "dist/$package/"
 
 scripts/sign-app.sh "dist/$package/OpenGame.app" "${OG_CODESIGN_IDENTITY:--}"
 codesign --verify --deep --strict "dist/$package/OpenGame.app"

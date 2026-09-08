@@ -527,12 +527,8 @@ final class OpenGameCore: @unchecked Sendable {
         // Direct Wine launches retain the absolute game path as their host
         // process name. Steam launches expose the corresponding C:\ path.
         // Match a complete path in either form, never just a common EXE name.
-        let process=Process(),output=Pipe()
-        process.executableURL=URL(fileURLWithPath:"/bin/ps");process.arguments=["-axo","pid=,comm="]
-        process.standardOutput=output;process.standardError=FileHandle.nullDevice
-        try process.run()
-        let data=output.fileHandleForReading.readDataToEndOfFile()
-        guard try wait(process,timeout:3)==0,let text=String(data:data,encoding:.utf8) else{return nil}
+        let data=try capturedOutput(URL(fileURLWithPath:"/bin/ps"),["-axo","pid=,comm="],timeout:3)
+        let text=String(decoding:data,as:UTF8.self)
         var candidates=Set([game.executable.lowercased()])
         let marker="/drive_c/"
         if let range=game.executable.lowercased().range(of:marker) {
@@ -608,31 +604,33 @@ final class OpenGameCore: @unchecked Sendable {
         do {return try wait(p,timeout:timeout)}
         catch {
             // A timed-out shutdown helper must not complete later after Cancel.
-            if p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL);p.waitUntilExit()}
+            if p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL)}
             throw error
         }
     }
+    // Regular-file capture cannot block on EOF held by a detached Wine child.
+    // The timeout covers the process itself, including a stalled Wine server.
+    func capturedOutput(_ executable:URL,_ arguments:[String],environment:[String:String]?=nil,timeout:TimeInterval) throws -> Data {
+        let file=fm.temporaryDirectory.appendingPathComponent("OpenGame-output-"+UUID().uuidString)
+        fm.createFile(atPath:file.path,contents:nil)
+        defer {try? fm.removeItem(at:file)}
+        let output=try FileHandle(forWritingTo:file)
+        defer {try? output.close()}
+        let p=Process();p.executableURL=executable;p.arguments=arguments;p.environment=environment
+        p.standardInput=FileHandle.nullDevice;p.standardOutput=output;p.standardError=FileHandle.nullDevice
+        try p.run()
+        guard try wait(p,timeout:timeout)==0 else{throw OGError.message("查询后台进程失败。")}
+        return try Data(contentsOf:file)
+    }
     private func windowsTaskNames(_ spec:LaunchSpec) throws -> [String] {
         let helper=path("bin/OpenGameWindow.exe")
-        var names=Set<String>()
-        // Wine's process snapshot can briefly lag a just-detached child. Merge a
-        // few bounded snapshots so Command-Q immediately after launch remains safe.
-        for attempt in 0..<3 {
-            if attempt>0 {Thread.sleep(forTimeInterval:0.2)}
-            let p=Process(),output=Pipe()
-            p.executableURL=spec.executable
-            p.arguments=fm.fileExists(atPath:helper.path) ? [helper.path,"--list"] : ["tasklist","/FO","CSV","/NH"]
-            p.environment=spec.environment
-            p.standardInput=FileHandle.nullDevice;p.standardOutput=output;p.standardError=FileHandle.nullDevice
-            try p.run()
-            let data=output.fileHandleForReading.readDataToEndOfFile()
-            guard try wait(p,timeout:5)==0,let text=String(data:data,encoding:.utf8) else{continue}
-            for line in text.split(separator:"\n") {
-                guard line.first=="\"",let end=line.dropFirst().firstIndex(of:"\"") else{continue}
-                names.insert(String(line[line.index(after:line.startIndex)..<end]).lowercased())
-            }
+        let arguments=fm.fileExists(atPath:helper.path) ? [helper.path,"--list"] : ["tasklist","/FO","CSV","/NH"]
+        let data=try capturedOutput(spec.executable,arguments,environment:spec.environment,timeout:2)
+        let text=String(decoding:data,as:UTF8.self)
+        return text.split(separator:"\n").compactMap {line in
+            guard line.first=="\"",let end=line.dropFirst().firstIndex(of:"\"") else{return nil}
+            return String(line[line.index(after:line.startIndex)..<end]).lowercased()
         }
-        return names.sorted()
     }
     private func writeShutdownNote(_ text:String) {
         let destination=path("Logs/shutdown.log")
@@ -643,12 +641,8 @@ final class OpenGameCore: @unchecked Sendable {
         }
     }
     private func nativeWindowsTaskNames() throws -> [String] {
-        let p=Process(),output=Pipe()
-        p.executableURL=URL(fileURLWithPath:"/bin/ps");p.arguments=["-axo","comm="]
-        p.standardInput=FileHandle.nullDevice;p.standardOutput=output;p.standardError=FileHandle.nullDevice
-        try p.run()
-        let data=output.fileHandleForReading.readDataToEndOfFile()
-        guard try wait(p,timeout:3)==0,let text=String(data:data,encoding:.utf8) else{return []}
+        let data=try capturedOutput(URL(fileURLWithPath:"/bin/ps"),["-axo","comm="],timeout:3)
+        let text=String(decoding:data,as:UTF8.self)
         let expression=try NSRegularExpression(pattern:"(?i)([a-z0-9_.-]+\\.exe)(?:\\s|$)")
         var names=Set<String>()
         for line in text.split(separator:"\n") {
@@ -684,6 +678,80 @@ final class OpenGameCore: @unchecked Sendable {
         }
         return true
     }
+    struct NativeSessionProcess:Hashable {
+        let pid:Int32
+        let startedSeconds:UInt64
+        let startedMicroseconds:UInt64
+    }
+    private func nativeIdentity(_ pid:Int32) -> NativeSessionProcess? {
+        guard pid != getpid() else{return nil}
+        var info=proc_bsdinfo()
+        guard proc_pidinfo(pid,PROC_PIDTBSDINFO,0,&info,Int32(MemoryLayout<proc_bsdinfo>.size))==Int32(MemoryLayout<proc_bsdinfo>.size),
+              info.pbi_uid==getuid(),info.pbi_status != UInt32(SZOMB) else{return nil}
+        return NativeSessionProcess(pid:pid,startedSeconds:info.pbi_start_tvsec,startedMicroseconds:info.pbi_start_tvusec)
+    }
+    // Read only the local process's prefix; never print or persist its environment.
+    private func nativePrefix(_ pid:Int32) -> String? {
+        var mib:[Int32]=[CTL_KERN,KERN_PROCARGS2,pid]
+        var size=0
+        guard sysctl(&mib,3,nil,&size,nil,0)==0,size>4,size<4*1024*1024 else{return nil}
+        var bytes=[UInt8](repeating:0,count:size)
+        guard sysctl(&mib,3,&bytes,&size,nil,0)==0 else{return nil}
+        bytes=Array(bytes.prefix(size))
+        let argc=bytes.withUnsafeBytes{$0.loadUnaligned(as:Int32.self)}
+        guard argc>=0,argc<100000 else{return nil}
+        var offset=4
+        func nextString()->String? {
+            guard offset<bytes.count,let end=bytes[offset...].firstIndex(of:0) else{return nil}
+            let value=String(decoding:bytes[offset..<end],as:UTF8.self);offset=end+1;return value
+        }
+        guard nextString() != nil else{return nil} // executable path
+        while offset<bytes.count && bytes[offset]==0 {offset+=1}
+        for _ in 0..<argc {guard nextString() != nil else{return nil}}
+        // Wine rewrites argv in place; KERN_PROCARGS2 can contain NUL padding
+        // before the surviving environment. Do not mistake it for end-of-data.
+        while let entry=nextString() {
+            if entry.hasPrefix("WINEPREFIX=/") {
+                return URL(fileURLWithPath:String(entry.dropFirst("WINEPREFIX=".count))).resolvingSymlinksInPath().path
+            }
+        }
+        return nil
+    }
+    func nativeSessionProcesses(folder:String,spec:LaunchSpec) -> [NativeSessionProcess] {
+        // Both the actual host executable and exact canonical prefix must match.
+        // An EXE basename or a matching Wine binary alone is never sufficient.
+        let engine=spec.executable.deletingLastPathComponent().deletingLastPathComponent().resolvingSymlinksInPath().path+"/"
+        let needed=proc_listpids(UInt32(PROC_ALL_PIDS),0,nil,0)
+        guard needed>0 else{return []}
+        var pids=[Int32](repeating:0,count:Int(needed)/MemoryLayout<Int32>.size+256)
+        let count=proc_listpids(UInt32(PROC_ALL_PIDS),0,&pids,Int32(pids.count*MemoryLayout<Int32>.size))
+        guard count>0 else{return []}
+        return pids.prefix(Int(count)/MemoryLayout<Int32>.size).compactMap {pid in
+            guard pid>0,let identity=nativeIdentity(pid) else{return nil}
+            var path=[CChar](repeating:0,count:4096)
+            guard proc_pidpath(pid,&path,UInt32(path.count))>0 else{return nil}
+            let executable=URL(fileURLWithPath:String(cString:path)).resolvingSymlinksInPath().path
+            guard executable.hasPrefix(engine),nativePrefix(pid)==folder,nativeIdentity(pid)==identity else{return nil}
+            return identity
+        }
+    }
+    private func terminateNativeSession(folder:String,spec:LaunchSpec) throws {
+        for (signal,interval):(Int32,TimeInterval) in [(SIGTERM,0.5),(SIGKILL,1.0)] {
+            let end=Date().addingTimeInterval(interval)
+            repeat {
+                let remaining=nativeSessionProcesses(folder:folder,spec:spec)
+                if remaining.isEmpty {return}
+                for process in remaining where nativeIdentity(process.pid)==process {
+                    // Revalidate prefix and executable each pass, including after PID reuse.
+                    writeShutdownNote("Native shutdown signal \(signal), PID \(process.pid)")
+                    Darwin.kill(process.pid,signal)
+                }
+                Thread.sleep(forTimeInterval:0.05)
+            } while Date()<end
+        }
+        let remaining=nativeSessionProcesses(folder:folder,spec:spec)
+        guard remaining.isEmpty else{throw OGError.message("后台进程尚未退出："+remaining.map{String($0.pid)}.joined(separator:", "))}
+    }
     // The Wine server, rather than the original loader PID, owns detached clients.
     // Only validated OpenGame prefixes are considered. Signal 0 probes the server
     // without starting one; clean session end respects WM_QUERYENDSESSION vetoes.
@@ -693,7 +761,7 @@ final class OpenGameCore: @unchecked Sendable {
         do {try fm.createDirectory(at:root,withIntermediateDirectories:true);try String(getpid()).write(to:closingMarker,atomically:true,encoding:.utf8)}
         catch {processLock.unlock();throw error}
         let savedSpecs=sessionSpecs,owned=children,helpers=watchers
-        for p in helpers where p.isRunning {p.terminate()}
+        for p in helpers where p.isRunning {Darwin.kill(p.processIdentifier,SIGTERM)}
         processLock.unlock()
         var targets=savedSpecs
         for b in try load().bottles {
@@ -706,8 +774,18 @@ final class OpenGameCore: @unchecked Sendable {
         for (folder,spec) in targets.sorted(by:{$0.key<$1.key}) {
             do {
                 let server=spec.executable.deletingLastPathComponent().appendingPathComponent("wineserver")
+                if force {
+                    // Do not depend on IPC with a wedged Wine server for the fallback.
+                    do {_ = try shutdownCommand(server,["-k"],spec.environment,timeout:2)}
+                    catch {writeShutdownNote("Wine shutdown command failed; checking native processes: "+error.localizedDescription)}
+                    try terminateNativeSession(folder:folder,spec:spec)
+                    continue
+                }
                 let active=try shutdownCommand(server,["-k0"],spec.environment,timeout:3)
-                if active==1 {continue} // No server: do not start Wine just to exit it.
+                if active==1 {
+                    guard nativeSessionProcesses(folder:folder,spec:spec).isEmpty else{throw OGError.message("Wine 服务已退出，但仍有游戏进程。")}
+                    continue // Never boot Wine just to exit it.
+                }
                 guard active==0 else{throw OGError.message("无法检查容器状态。")}
                 if !force {
                     let tasksBeforeShutdown=try windowsTaskNames(spec)
@@ -727,16 +805,17 @@ final class OpenGameCore: @unchecked Sendable {
                 // chose Force Quit. Stop residual services and wait for server exit.
                 _ = try shutdownCommand(server,["-k"],spec.environment,timeout:8)
                 guard try shutdownCommand(server,["-w"],spec.environment,timeout:8)==0 else{throw OGError.message("Wine 服务尚未退出。")}
+                guard nativeSessionProcesses(folder:folder,spec:spec).isEmpty else{throw OGError.message("Wine 会话结束后仍有后台进程。")}
             } catch {failures.append(URL(fileURLWithPath:folder).lastPathComponent+"："+error.localizedDescription)}
         }
         let deadline=Date().addingTimeInterval(3)
         while (owned+helpers).contains(where:{$0.isRunning}) && Date()<deadline {Thread.sleep(forTimeInterval:0.05)}
         for p in owned+helpers where p.isRunning {
             if force {
-                p.terminate()
+                Darwin.kill(p.processIdentifier,SIGTERM)
                 let end=Date().addingTimeInterval(2)
                 while p.isRunning && Date()<end {Thread.sleep(forTimeInterval:0.05)}
-                if p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL);p.waitUntilExit()}
+                if p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL)}
             } else {failures.append("后台任务尚未退出（PID \(p.processIdentifier)）。")}
         }
         if !failures.isEmpty {throw OGError.message(failures.joined(separator:"\n"))}
@@ -745,7 +824,13 @@ final class OpenGameCore: @unchecked Sendable {
     func wait(_ p: Process, timeout: TimeInterval=120) throws -> Int32 {
         let deadline=Date().addingTimeInterval(timeout)
         while p.isRunning && Date()<deadline { Thread.sleep(forTimeInterval:0.1) }
-        if p.isRunning { p.terminate();throw OGError.message("操作超时，详情见日志。") }
+        if p.isRunning {
+            Darwin.kill(p.processIdentifier,SIGTERM)
+            let end=Date().addingTimeInterval(0.25)
+            while p.isRunning && Date()<end {Thread.sleep(forTimeInterval:0.02)}
+            if p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL)}
+            throw OGError.message("操作超时，详情见日志。")
+        }
         return p.terminationStatus
     }
     func createBottle(name: String, renderer: Renderer, engineFamily: EngineFamily = .foss) throws -> Bottle {
