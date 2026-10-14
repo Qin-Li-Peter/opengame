@@ -23,5 +23,11 @@
     ],
     "test": "NVAPI Initialize, NGX Init and capability parameter allocation passed; real DLSS rendering unverified"
   },
-  "ntdirectory_boolean_test": "SDK 26.5 source-built ntdll: canonical and Steam raw BOOLEAN patterns advance and terminate in both FOSS cores; isolated UDP TOS b8 and thread/mutex/event/semaphore passed. Actual 75-second client check: wineserver 0.7-1.0% CPU; CEF 37-39% remains. Game play and performance parity unverified."
+  "ntdirectory_boolean_test": "SDK 26.5 source-built ntdll: canonical and Steam raw BOOLEAN patterns advance and terminate in both FOSS cores; isolated UDP TOS b8 and thread/mutex/event/semaphore passed. Actual 75-second client check: wineserver 0.7-1.0% CPU; CEF 37-39% remains. Game play and performance parity unverified.",
+  "portable_release_paths": {
+    "prefix": "/opt/opengame",
+    "method": "debug symbol removal; equal-length known install/source prefix normalization preserving pooled suffixes; UTF-8 and UTF-16; external exports and PE code/entrypoint preserved",
+    "ntdll_sha256": "a3573d8dba627c640ad944843fe74c404a8e6f2e4774f071641445a3b5768aa1",
+    "validation": "both BOOLEAN cores and isolated complete fresh installation passed; own home path scan empty"
+  }
 }

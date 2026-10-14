@@ -53,5 +53,6 @@ cp "$repo/runtime/manifest.json" "$payload/manifest.json"
 cp "$repo/docs/provenance.json" "$payload/provenance.json"
 xattr -cr "$payload" 2>/dev/null || true
 "$repo/scripts/relocate-runtime.py" "$payload"
+python3 "$repo/scripts/sanitize-runtime-paths.py" "$payload"
 "$repo/scripts/audit-runtime.py" "$payload"
 echo "Embedded base Wine and complete DXMT runtime in $app"

@@ -28,3 +28,11 @@ The command audits symlinks, user data, absolute Mach-O dependencies, and render
 For Developer ID distribution, set `OG_CODESIGN_IDENTITY`, package, and then submit the ZIP with `scripts/notarize.sh`. Notarization requires the repository owner's Apple Developer credentials and cannot be completed by source code alone.
 
 For the BOOLEAN regression, run `python3 scripts/test-ntdirectory-boolean.py /path/to/OpenGame.app --engine WineFOSS11-DXMT`. It creates an isolated prefix, retains numeric results, limits each call and host process, and stops only that independent Wine server. See `docs/STEAM-CPU-ENUMERATION.md`. Pin the SDK used by the tested runtime: macOS 26.5 SDK. The default macOS 27 SDK incorrectly enabled `pipe2` for this macOS 26.6 host and caused an initialization crash; do not stage that candidate. Runtime Mach-O minimum OS requirements must also be audited; launcher deployment settings alone do not establish runtime support.
+
+## Portable release paths
+
+Configure Wine with a portable prefix such as `/opt/opengame` and install into a staging root with `DESTDIR`; never compile a maintainer home directory into the loader fallback paths. For existing SDK 26.5 ntdll build objects, rebuild `dlls/ntdll/unix/loader.o` and `dlls/ntdll/ntdll.so` with `prefix=/opt/opengame`. Strip only debug symbols with `strip -S` from distributable Mach-O files, then re-sign, audit exports and dependencies, and rerun both BOOLEAN and fresh-install tests. Keep the complete corresponding source and patches separately.
+
+The packaging step `scripts/sanitize-runtime-paths.py` removes the current builder’s home paths from known Wine `__cstring` installation/source strings with equal-length portable prefixes using redundant POSIX dot components. String normalization preserves pooled suffix offsets; PE code, entry points and exports are checked, checks unchanged external exports, and refuses unknown paths or unsupported binary layouts. This also makes previously built cores suitable for redistribution without retaining local install paths.
+
+Runtime packages omit Wine SDK headers, compiler tools, static import archives and dSYM bundles; these are development artifacts, not game runtime dependencies. Licenses, runtime modules and the complete corresponding source remain available.

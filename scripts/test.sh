@@ -17,3 +17,5 @@ build/steam-settings-tests
 
 xcrun swiftc -sdk "${OG_SWIFT_SDK:-$(xcrun --show-sdk-path)}" -module-cache-path "$PWD/build/module-cache" -swift-version 5 -warnings-as-errors -parse-as-library source/OpenGameCore.swift tests/SteamDiscoveryTests.swift -framework AppKit -o build/steam-discovery-tests
 build/steam-discovery-tests
+
+python3 tests/RuntimeSanitizerTests.py

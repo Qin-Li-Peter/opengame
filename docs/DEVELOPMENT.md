@@ -41,7 +41,7 @@ scripts/package-full.sh /path/to/audited-runtime-root
 - [运行库布局](RUNTIME.md)
 - [运行库来源与构建](../runtime/BUILDING.md)
 - [第三方许可证](THIRD_PARTY.md)
-- [能力与历史诊断](CAPABILITIES.md)
+- [当前发布测试范围](releases/v0.5.8.md)
 - [Steam 网络冻结诊断](STEAM-NETWORK-FREEZE.md)
 
 CLI 位于应用包 `Contents/MacOS/OpenGameCLI`。用户数据默认位于 `~/Library/Application Support/OpenGame`；隔离测试使用 `OPENGAME_ROOT`，不要使用真实账号容器进行清理测试。

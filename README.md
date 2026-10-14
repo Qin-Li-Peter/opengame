@@ -1,81 +1,95 @@
+<div align="center">
+
+<img src="resources/AppIcon.png" width="112" alt="OpenGame">
+
 # OpenGame
 
-**中文** · [English](README.en.md)
+### Windows games. Your Mac. One library.
 
-**在 Apple Silicon Mac 上安装、管理和运行 Windows 游戏。**
+**Install, manage, and run Windows games on Apple Silicon.**
 
-OpenGame 提供图形化的 Windows 游戏环境：安装 Windows 版 Steam、下载自己拥有的游戏，再从 Steam 或 OpenGame 游戏库启动。你也可以安装其他 EXE / MSI 程序，或添加已有的 Windows 游戏。
+[Download 0.5.8](https://github.com/Qin-Li-Peter/opengame/releases/download/v0.5.8/OpenGame-0.5.8-macos-arm64.zip) · [Quick start](#quick-start-with-steam) · [Docs](docs/DEVELOPMENT.md) · [Releases](https://github.com/Qin-Li-Peter/opengame/releases) · **English** · [简体中文](README.zh-CN.md)
 
-完整安装包包含所需运行库，无需安装 CrossOver 或自行编译。游戏、账号和存档由你自行准备；游戏兼容性需要逐款验证。
+</div>
 
-## 下载与系统要求
+OpenGame provides graphical Windows game environments. Install Windows Steam, download games you own, and launch them from Steam or the OpenGame library. You can also run EXE / MSI installers or add existing Windows games.
 
-### [下载 OpenGame 0.5.8 完整安装包（Apple Silicon · ZIP · 约 1.4 GB）](https://github.com/Qin-Li-Peter/opengame/releases/download/v0.5.8/OpenGame-0.5.8-macos-arm64.zip)
+The full application includes the required runtime libraries, so you do not need CrossOver or a local build. Bring your own games, accounts, and saves; compatibility must be verified for each game.
 
-[版本说明与校验文件](https://github.com/Qin-Li-Peter/opengame/releases/tag/v0.5.8) · [快速开始](#快速开始以-steam-为例)
+## What you can do
 
-当前完整包是 **0.5.8 内测版**，包含 Steam 游戏自动发现、多库扫描和刷新。游戏兼容性仍需逐款验证。
+- **Play from one library:** install Windows Steam, download games you own, and launch them from their corresponding container.
+- **Keep environments organized:** discover mapped Steam libraries, refresh game states, and configure or back up containers.
+- **Bring other games:** run EXE / MSI installers or add an existing Windows executable without copying its game folder.
 
-| 项目 | 要求 |
+## Download and requirements
+
+### [Download OpenGame 0.5.8 full application (Apple Silicon · ZIP · about 1 GB)](https://github.com/Qin-Li-Peter/opengame/releases/download/v0.5.8/OpenGame-0.5.8-macos-arm64.zip)
+
+[Release notes and checksums](https://github.com/Qin-Li-Peter/opengame/releases/tag/v0.5.8) · [Quick start](#quick-start-with-steam)
+
+The full application is the **0.5.8 prerelease**, including automatic Steam discovery, multiple libraries, and refresh. Compatibility still requires verification for each game.
+
+| Item | Requirement |
 | --- | --- |
-| Mac | Apple Silicon（M 系列芯片）；不支持 Intel Mac |
-| 系统 | macOS 26.0 或更新版本；Apple Silicon |
-| Rosetta | 按 macOS 提示安装；见 [Apple 安装说明](https://support.apple.com/zh-cn/102527) |
-| 磁盘 | ZIP 约 1.4 GB，解压后应用约 4 GB；另需游戏环境和游戏所占空间 |
-| 网络与账号 | Steam 安装、游戏下载和在线游玩需要联网及自己的 Steam 账号 |
-| 游戏兼容性 | 以 DirectX 10/11 游戏为主要尝试对象；DirectX 12 和依赖内核级反作弊的游戏不在当前支持范围内。联机、语音与过场视频仍需逐款验证 |
+| Mac | Apple Silicon (M-series); Intel Macs are unsupported |
+| System | macOS 26.0 or later; Apple Silicon |
+| Rosetta | Install when prompted by macOS; see [Apple's instructions](https://support.apple.com/en-us/102527) |
+| Storage | About 1 GB for the ZIP and 2.6 GB for the extracted app, plus space for environments and games |
+| Network and account | Steam installation, game downloads, and online play require internet access and your own Steam account |
+| Game compatibility | Primarily intended for trying DirectX 10/11 games. DirectX 12 and games requiring kernel-level anti-cheat are outside the current support scope. Multiplayer, voice chat, and cutscenes require testing per game |
 
-建议先测试一款游戏，再迁移游戏库。
+Test one game before moving your library.
 
-## 快速开始：以 Steam 为例
+## Quick start with Steam
 
-### 1. 安装 OpenGame
+### 1. Install OpenGame
 
-下载上面的 **`OpenGame-0.5.8-macos-arm64.zip`**，解压后将 **OpenGame.app** 拖到“应用程序”文件夹并打开。Release 中的 Source code 和 corresponding-source 是源码，不是可安装应用。
+Download **`OpenGame-0.5.8-macos-arm64.zip`** above, extract it, move **OpenGame.app** to Applications, and open it. The Release's Source code and corresponding-source archives contain source code, not an installable application.
 
-当前包尚未经过 Apple 公证。如果 macOS 提示无法验证开发者，确认下载来源后，按 [Apple 官方说明](https://support.apple.com/zh-cn/102445)，在尝试打开后进入“系统设置 → 隐私与安全性”选择“仍要打开”。若提示文件损坏或含恶意软件，停止打开，重新下载并向维护者反馈。
+This package is not yet notarized by Apple. If macOS cannot verify the developer, confirm the download source and follow [Apple's instructions](https://support.apple.com/en-us/102445): after attempting to open the app, go to System Settings → Privacy & Security and choose Open Anyway. If macOS reports damage or malware, stop, download again, and contact the maintainer.
 
-### 2. 创建或选择游戏环境
+### 2. Create or select an environment
 
-点击 **新建容器**，填写名称（例如 `Steam`），保留默认设置并点击 **创建**；已有容器可直接选中。
+Click **新建容器** (New container), enter a name such as `Steam`, keep the defaults, and click **创建** (Create). You can select an existing container instead.
 
-“容器”是独立的 Windows 游戏环境，保存程序、设置和部分存档；Steam 云同步或显式映射的文件可能跨容器共享。第一次使用创建一个即可，默认图形设置为 **DXMT**。
+A container is an independent Windows environment holding programs, settings, and some saves. Steam Cloud or explicitly mapped files may share data across containers. Start with one container; the default graphics setting is **DXMT**. The labels below match the current Chinese interface.
 
-### 3. 安装并登录 Steam
+### 3. Install and sign in to Steam
 
-1. 选中目标容器，点击 **安装应用 → Steam → 下载并安装**，等待自动安装完成，保留 Steam 默认安装位置。
-2. 点击工具栏的 **Steam**，登录自己的账号并完成 Steam Guard 验证。
-3. 等待首次初始化和 Steam 更新完成，可能需要几分钟。
+1. Select the container and click **安装应用 → Steam → 下载并安装** (Install apps → Steam → Download and install). Wait for automatic installation to finish and keep Steam’s default installation location.
+2. Click **Steam** in the toolbar, sign in to your account, and complete Steam Guard verification.
+3. Allow the initial setup and Steam updates to finish; this may take a few minutes.
 
-### 4. 下载游戏
+### 4. Download a game
 
-在这个 **Windows 版 Steam** 的游戏库中安装自己拥有的游戏，可以保留默认游戏库位置，也可使用此容器 Windows 盘符映射到的其他 Steam 库。Mac 原生 Steam 中的 macOS 游戏需要在此环境中重新安装 Windows 版本。
+Install a game you own in this **Windows Steam** library, using the default library or another Steam library accessible through this container’s Windows drive mappings. Games installed through native macOS Steam need their Windows versions installed again inside this environment.
 
-OpenGame 自动读取这个容器的 Steam 默认库和 `libraryfolders.vdf` 中的其他库。移动硬盘等外部库需先挂载，并能通过本容器的 Windows 盘符访问；库暂不可用时显示相应状态。
+OpenGame automatically reads this container’s default Steam library and additional libraries in `libraryfolders.vdf`. External drives must be mounted and accessible through the container’s Windows drive mappings. Unavailable libraries are shown with their status.
 
-### 5. 启动游戏
+### 5. Launch the game
 
-- **从 Steam 启动：** 下载完成后，在 Steam 游戏库中点击“开始游戏”。
-- **从 OpenGame 启动：** 回到 OpenGame，游戏会自动出现在对应容器的列表中；若尚未出现，点击 **刷新游戏库**（Command-R）。确认状态为“已安装”后，点击卡片的 **启动**；双击卡片也可启动。下载或更新中的入口会显示状态，完成后再启动。
+- **From Steam:** Once the download finishes, click Play in your Steam library.
+- **From OpenGame:** Return to OpenGame; games automatically appear under the corresponding container. If a game has not appeared, click **刷新游戏库** (Refresh library, Command-R). When its status is **已安装** (Installed), click the card’s **启动** (Launch) button; double-click also launches. Downloading or updating entries show their status; finish the installation before launching.
 
-OpenGame 中的 Steam 游戏入口会调用对应容器的 Steam 客户端，请先确保 Steam 已登录。安装成功或出现入口不代表该游戏已经通过兼容性验证。
+OpenGame's Steam game entries use the Steam client in the corresponding container, so make sure you are signed in. A successful installation or a library entry does not establish game compatibility.
 
-退出前保存游戏。**Command-Q** 退出 OpenGame 会同时结束其容器中的游戏和 Steam；正常退出失败时会清理残留进程，退出启动器前务必先保存。
+Save before quitting. **Command-Q** quits OpenGame and closes games and Steam in its containers; remaining processes are cleaned up if normal shutdown fails. Save your game before quitting the launcher.
 
-## 其他游戏与环境管理
+## Other games and environment management
 
-- **安装其他 Windows 游戏：** 选中容器，点击 **运行安装程序**，选择 EXE / MSI 完成安装，再用 **添加游戏** 选择游戏主程序。
-- **添加已有游戏：** 用 **添加游戏** 选择 EXE 和容器。保留完整游戏文件夹；添加入口不会复制游戏文件。
-- **补充运行库：** 在目标容器的 **安装应用** 中按游戏要求安装 Visual C++、.NET 等组件。
-- **调整与备份环境：** 在 **容器工具** 中更改图形设置、导出或恢复容器归档。容器外的游戏文件需另行备份。
-- **更新应用：** 保存游戏并退出后，下载新完整包，替换“应用程序”中的 OpenGame.app。应用更新会保留已有游戏库和容器。
+- **Install another Windows game:** Select a container, click **运行安装程序** (Run installer), and complete the EXE / MSI installer. Then use **添加游戏** (Add game) to select the game's main executable.
+- **Add an existing game:** Use **添加游戏** (Add game) to select its EXE and container. Keep the complete game folder; adding an entry does not copy its files.
+- **Install dependencies:** Use **安装应用** (Install apps) in the target container to install Visual C++, .NET, or other components required by the game.
+- **Configure and back up:** Use **容器工具** (Container tools) to change graphics settings or export and restore container archives. Back up game files outside the container separately.
+- **Update the app:** Save and quit, download a new full application package, and replace OpenGame.app in Applications. App updates preserve existing libraries and containers.
 
-请使用自己拥有或获授权的游戏文件。
+Use games you own or are authorized to use.
 
-## 项目与贡献
+## Project and contributions
 
-遇到问题或希望贡献改进，请通过 [Issues](https://github.com/Qin-Li-Peter/opengame/issues) 提供 OpenGame / macOS 版本、Mac 型号、游戏名称和复现步骤。可从工具栏的 **日志** 获取诊断信息；分享前移除账号、令牌等个人信息。代码贡献请先阅读开发与构建说明，并说明验证方式。
+Report problems or propose improvements through [Issues](https://github.com/Qin-Li-Peter/opengame/issues), including your OpenGame / macOS versions, Mac model, game name, and reproduction steps. The toolbar's **日志** (Logs) button provides diagnostic information; remove accounts, tokens, and other personal information before sharing. For code contributions, read the development and build guide and describe how you validated the change.
 
-OpenGame 原创启动器与脚本采用 MIT 许可证，运行库遵循各自许可证。项目不附带游戏、Steam 账号或 CrossOver 专有组件；完整 Release 同时提供运行库对应源码。
+The original OpenGame launcher and scripts use the MIT license; runtime components retain their own licenses. The project includes no games, Steam accounts, or proprietary CrossOver components. Full Releases also provide corresponding runtime source code.
 
-[开发与构建](docs/DEVELOPMENT.md) · [更新记录](CHANGELOG.md) · [第三方组件](docs/THIRD_PARTY.md) · [许可证](LICENSE)
+[Development and builds](docs/DEVELOPMENT.md) · [Changelog](CHANGELOG.md) · [Third-party components](docs/THIRD_PARTY.md) · [License](LICENSE)
