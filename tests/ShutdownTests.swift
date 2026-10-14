@@ -2,6 +2,7 @@ import Foundation
 import Darwin
 @main struct ShutdownTests {
     static func main() throws {
+        if CommandLine.arguments.contains("--native-worker") {Darwin.sleep(120);return}
         let fm=FileManager.default
         let root=fm.temporaryDirectory.appendingPathComponent("OpenGame-Shutdown-"+UUID().uuidString)
         defer{try? fm.removeItem(at:root)}
@@ -72,11 +73,11 @@ import Darwin
 
         // Neither a shared executable nor a shared prefix alone establishes ownership.
         let worker=bin.appendingPathComponent("native-worker")
-        try fm.copyItem(at:URL(fileURLWithPath:"/bin/sleep"),to:worker)
-        // A relocated Apple platform binary must be re-signed before macOS runs it.
+        try fm.copyItem(at:URL(fileURLWithPath:CommandLine.arguments[0]),to:worker)
+        // Use our own fixture instead of relocating an Apple platform binary.
         _ = try core.capturedOutput(URL(fileURLWithPath:"/usr/bin/codesign"),["--force","--sign","-",worker.path],timeout:5)
         func spawn(_ executable:URL,_ folder:URL)throws->Process {
-            let process=Process();process.executableURL=executable;process.arguments=["120"]
+            let process=Process();process.executableURL=executable;process.arguments=executable==worker ? ["--native-worker"] : ["120"]
             var env=ProcessInfo.processInfo.environment;env["WINEPREFIX"]=folder.path;process.environment=env
             process.standardInput=FileHandle.nullDevice;process.standardOutput=FileHandle.nullDevice;process.standardError=FileHandle.nullDevice
             try process.run();return process
@@ -85,7 +86,13 @@ import Darwin
         let otherPrefix=try spawn(worker,root.appendingPathComponent("Prefixes/unrelated"))
         let otherRuntime=try spawn(URL(fileURLWithPath:"/bin/sleep"),prefix)
         defer {for p in [ownedNative,otherPrefix,otherRuntime] where p.isRunning {Darwin.kill(p.processIdentifier,SIGKILL)}}
-        let native=core.nativeSessionProcesses(folder:prefix.resolvingSymlinksInPath().path,spec:launch)
+        var native=core.nativeSessionProcesses(folder:prefix.resolvingSymlinksInPath().path,spec:launch)
+        let fixtureDeadline=Date().addingTimeInterval(2)
+        while native.isEmpty && ownedNative.isRunning && Date()<fixtureDeadline {
+            Thread.sleep(forTimeInterval:0.02)
+            native=core.nativeSessionProcesses(folder:prefix.resolvingSymlinksInPath().path,spec:launch)
+        }
+        precondition(ownedNative.isRunning,"Native fixture must remain alive before ownership assertion")
         precondition(native.map{$0.pid}==[ownedNative.processIdentifier],"Only exact prefix plus runtime may be terminated")
         // No Wine server exists, but an untracked detached client still does.
         do {try core.shutdown(gracePeriod:0.2);fatalError("Detached client was ignored")} catch is OGError {}
