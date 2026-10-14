@@ -28,6 +28,13 @@ for relative in required_dxmt:
     if not (root / relative).is_file():
         raise SystemExit(f"missing complete DXMT runtime component: {relative}")
 
+extensions=root / "Extensions/dxmt/x86_64-windows"
+if extensions.exists():
+    for name in ["nvapi64.dll", "nvngx.dll"]:
+        file=extensions/name
+        if not file.is_file() or not file.read_bytes().startswith(b"MZ"):
+            raise SystemExit(f"incomplete DXMT extension pack: {name}")
+
 forbidden_names = {"steam.exe", "loginusers.vdf", "libraryfolders.vdf", "library.json", "system.reg", "user.reg"}
 forbidden_fragments = ("CrossOver.app", "/Prefixes/", "/drive_c/Program Files (x86)/Steam/")
 problems = []

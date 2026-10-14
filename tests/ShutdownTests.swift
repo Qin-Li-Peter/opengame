@@ -104,6 +104,14 @@ import Darwin
         try core.mutate{$0.bottles=[escaped]}
         do{try core.shutdown(gracePeriod:1);fatalError("Escaping prefix allowed")}catch is OGError{}
         precondition(!fm.fileExists(atPath:outside.appendingPathComponent("commands").path))
+        core.resumeLaunches()
+        let unrelated=Bottle(id:"other",name:"Other",directory:"Prefixes/other",renderer:.wine)
+        let untouchedPrefix=try core.prefix(unrelated);try fm.createDirectory(at:untouchedPrefix,withIntermediateDirectories:true)
+        try Data().write(to:untouchedPrefix.appendingPathComponent("active"))
+        try core.mutate{$0.bottles=[b,unrelated]}
+        try core.shutdown(force:true,onlyBottleID:b.id)
+        precondition(fm.fileExists(atPath:untouchedPrefix.appendingPathComponent("active").path),"Single-bottle shutdown must preserve the other bottle")
+        precondition(!fm.fileExists(atPath:untouchedPrefix.appendingPathComponent("commands").path),"Do not query the other bottle")
         print("PASS: idle probe, launch barrier, veto, clean shutdown, explicit force, hung query timeout, unresponsive server, detached native cleanup, unrelated process isolation, unmanaged prefix rejection")
     }
 }

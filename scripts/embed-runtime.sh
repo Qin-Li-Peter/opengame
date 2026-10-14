@@ -9,7 +9,7 @@ payload="$resources/Runtime"
 
 test -x "$runtime_root/Engines/WineFOSS11/bin/wine" || { echo "Missing WineFOSS11 in $runtime_root" >&2; exit 1; }
 test -x "$runtime_root/Engines/WineFOSS11-DXMT/bin/wine" || { echo "Missing complete WineFOSS11-DXMT in $runtime_root" >&2; exit 1; }
-test -d "$runtime_root/Engines/WineFOSS11-DXVK/lib/wine" || { echo "Missing WineFOSS11-DXVK renderer files" >&2; exit 1; }
+test -d "$runtime_root/Engines/WineFOSS11-DXVK/lib/wine" || test -d "$runtime_root/RendererPacks/dxvk" || { echo "Missing WineFOSS11-DXVK renderer files" >&2; exit 1; }
 
 rm -rf "$payload"
 mkdir -p "$payload/Engines" "$payload/RendererPacks/dxmt" "$payload/RendererPacks/dxvk"
@@ -34,7 +34,7 @@ done
 for renderer in dxmt dxvk; do
   case "$renderer" in
     dxmt) variant="$runtime_root/Engines/WineFOSS11-DXMT/lib/wine" ;;
-    dxvk) variant="$runtime_root/Engines/WineFOSS11-DXVK/lib/wine" ;;
+    dxvk) variant="$runtime_root/Engines/WineFOSS11-DXVK/lib/wine"; if ! test -d "$variant"; then variant="$runtime_root/RendererPacks/dxvk"; fi ;;
   esac
   for arch in x86_64-windows i386-windows; do
     mkdir -p "$payload/RendererPacks/$renderer/$arch"
@@ -44,6 +44,10 @@ for renderer in dxmt dxvk; do
     done
   done
 done
+
+if test -d "$runtime_root/Extensions/dxmt"; then
+  ditto "$runtime_root/Extensions/dxmt" "$payload/Extensions/dxmt"
+fi
 
 cp "$repo/runtime/manifest.json" "$payload/manifest.json"
 cp "$repo/docs/provenance.json" "$payload/provenance.json"

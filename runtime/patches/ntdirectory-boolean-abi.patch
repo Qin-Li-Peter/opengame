@@ -1,0 +1,35 @@
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -2081,7 +2081,13 @@
+                                         ULONG *context, ULONG *ret_size )
+ {
+     unsigned int status, i, count, total_len, pos, used_size, used_count, strpool_head;
+-    ULONG index = restart ? 0 : *context;
++    /* Windows BOOLEAN occupies one byte; callers may leave upper bits set.
++     * The Unix syscall bridge does not canonicalize those bits. Force byte
++     * loads so compiler assumptions about zero-extended C arguments cannot
++     * turn a false restart into an endless first-entry enumeration. */
++    const volatile BOOLEAN single_entry_byte = single_entry;
++    const volatile BOOLEAN restart_byte = restart;
++    ULONG index = restart_byte ? 0 : *context;
+     struct directory_entry *entries;
+ 
+     if (!(entries = malloc( size ))) return STATUS_NO_MEMORY;
+@@ -2090,7 +2096,7 @@
+     {
+         req->handle = wine_server_obj_handle( handle );
+         req->index = index;
+-        req->max_count = single_entry ? 1 : UINT_MAX;
++        req->max_count = single_entry_byte ? 1 : UINT_MAX;
+         wine_server_set_reply( req, entries, size );
+         status = wine_server_call( req );
+         count = reply->count;
+@@ -2159,7 +2165,7 @@
+         return STATUS_NO_MORE_ENTRIES;
+     }
+ 
+-    if (single_entry && !used_count)
++    if (single_entry_byte && !used_count)
+     {
+         if (ret_size) *ret_size = 2 * sizeof(*buffer) + 2 * sizeof(WCHAR) + total_len;
+         return STATUS_BUFFER_TOO_SMALL;

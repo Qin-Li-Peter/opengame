@@ -7,23 +7,108 @@ enum OGError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
-enum Renderer: String, Codable, CaseIterable { case wine, dxvk, dxmt
-    var label: String { switch self {case .wine:return "Wine · 旧游戏 / 2D";case .dxvk:return "DXVK · DirectX 10/11";case .dxmt:return "DXMT · DirectX 10/11 → Metal"} }
+enum Renderer: String, Codable, CaseIterable { case automatic, d3dmetal, dxmt, dxvk, wine
+    var label: String { switch self {case .automatic:return "自动";case .d3dmetal:return "D3DMetal";case .dxmt:return "DXMT";case .dxvk:return "DXVK";case .wine:return "Wine"} }
 }
 enum EngineFamily: String, Codable, CaseIterable { case winehq, foss
     var label: String { self == .foss ? "Wine FOSS 11 + MSync（推荐）" : "WineHQ 11（兼容旧容器）" }
 }
+enum SteamMode: String, Codable, CaseIterable {
+    case standard, compatibility
+    var label:String {self == .standard ? "标准模式（实验）" : "兼容模式（CPU 绘制、单进程）"}
+}
 struct Bottle: Codable, Identifiable, Hashable {
     var id: String; var name: String; var directory: String; var renderer: Renderer
     var engineFamily: EngineFamily? = nil
+    // Optional fields preserve schema-1 catalogs and archives.
+    var msyncEnabled: Bool? = nil
+    var frameRateLimit: Int? = nil
+    var highResolution: Bool? = nil
+    var dlssEnabled: Bool? = nil
+    var steamMode: SteamMode? = nil
+    var steamOverlayEnabled: Bool? = nil
+    var diagnosticsEnabled: Bool? = nil
+    var effectiveSteamMode: SteamMode {steamMode ?? .compatibility}
+    var usesSteamOverlay: Bool {steamOverlayEnabled ?? false}
+    var usesMSync: Bool { msyncEnabled ?? true }
+    var effectiveFrameRateLimit: Int { frameRateLimit ?? 0 }
 }
 struct Game: Codable, Identifiable, Hashable {
     var id: String; var title: String; var bottleID: String
     var executable: String; var arguments: [String]; var workingDirectory: String
     var icon: String?; var steamID: String?; var note: String
+    var steamInstallation:SteamInstallation? = nil
+    var steamManaged:Bool? = nil
+}
+enum SteamInstallState:String,Codable {case installed,downloading,updating,notInstalled,unavailable,failed
+    var label:String {switch self {case .installed:return "已安装";case .downloading:return "下载中";case .updating:return "更新中";case .notInstalled:return "未安装";case .unavailable:return "库目录暂不可用";case .failed:return "安装异常"}}
+}
+struct SteamInstallation:Codable,Hashable {
+    var library:String;var directory:String;var manifest:String;var state:SteamInstallState;var buildID:String?
+    var downloaded:UInt64;var total:UInt64
+    var label:String {state == .downloading && total>0 ? "下载中 \(min(100,Int(Double(downloaded)/Double(total)*100)))%" : state.label}
+}
+struct SteamScanResult {var added=0;var updated=0;var warnings:[String]=[];var watchPaths:[URL]=[]}
+indirect enum SteamKV {
+    case text(String),object([String:SteamKV])
+    var text:String? {if case .text(let value)=self{return value};return nil}
+    var object:[String:SteamKV]? {if case .object(let value)=self{return value};return nil}
+}
+enum SteamKeyValues {
+    // Steam's local files are an observed format, not a stable public API.
+    // Reject partial writes and bound size/depth instead of guessing values.
+    static func parse(_ text:String) throws -> [String:SteamKV] {
+        guard text.utf8.count<=2*1024*1024 else{throw OGError.message("Steam 清单过大。")}
+        enum Token {case text(String),open,close}
+        let chars=Array(text);var i=0,tokens:[Token]=[]
+        while i<chars.count {
+            let c=chars[i]
+            if c.isWhitespace || c=="\u{feff}" {i+=1;continue}
+            if c=="/",i+1<chars.count,chars[i+1]=="/" {while i<chars.count && chars[i] != "\n" {i+=1};continue}
+            if c=="{" {tokens.append(.open);i+=1;continue}
+            if c=="}" {tokens.append(.close);i+=1;continue}
+            var value=""
+            if c=="\"" {
+                i+=1;var closed=false
+                while i<chars.count {
+                    let next=chars[i];i+=1
+                    if next=="\"" {closed=true;break}
+                    if next=="\\",i<chars.count {
+                        let escaped=chars[i];i+=1
+                        if escaped=="\\" || escaped=="\"" {value.append(escaped)}
+                        else {value.append("\\");value.append(escaped)}
+                    } else {value.append(next)}
+                }
+                guard closed else{throw OGError.message("Steam 正在写入清单，请稍后刷新。")}
+            } else {
+                while i<chars.count && !chars[i].isWhitespace && chars[i] != "{" && chars[i] != "}" {value.append(chars[i]);i+=1}
+            }
+            guard !value.isEmpty || c=="\"",tokens.count<100000 else{throw OGError.message("Steam 清单格式无效。")}
+            tokens.append(.text(value))
+        }
+        var index=0
+        func object(_ depth:Int,_ nested:Bool) throws -> [String:SteamKV] {
+            guard depth<=16 else{throw OGError.message("Steam 清单嵌套过深。")}
+            var result:[String:SteamKV]=[:]
+            while index<tokens.count {
+                if case .close=tokens[index] {guard nested else{throw OGError.message("Steam 清单括号无效。")};index+=1;return result}
+                guard case .text(let key)=tokens[index] else{throw OGError.message("Steam 清单缺少字段名。")};index+=1
+                guard index<tokens.count else{throw OGError.message("Steam 正在写入清单，请稍后刷新。")}
+                switch tokens[index] {
+                case .text(let value):result[key.lowercased()] = .text(value);index+=1
+                case .open:index+=1;result[key.lowercased()] = .object(try object(depth+1,true))
+                case .close:throw OGError.message("Steam 清单缺少字段值。")
+                }
+            }
+            guard !nested else{throw OGError.message("Steam 正在写入清单，请稍后刷新。")}
+            return result
+        }
+        return try object(0,false)
+    }
 }
 struct Library: Codable {
     var schema = 1; var bottles: [Bottle]; var games: [Game]
+    var hiddenSteamGames:[String]? = nil
 }
 struct LaunchSpec {
     let executable: URL; let arguments: [String]; let directory: URL; let environment: [String:String]; let log: URL
@@ -78,7 +163,7 @@ final class OpenGameCore: @unchecked Sendable {
             try fm.createDirectory(at:path(folder),withIntermediateDirectories:true)
         }
         if let resources=Bundle.main.resourceURL {
-            for (name,target) in [("OpenGameWindow.exe","bin/OpenGameWindow.exe"),("steamwebhelper.exe","Engines/SteamCompat/steamwebhelper.exe"),("steamerrorreporter64.exe","Engines/SteamCompat/steamerrorreporter64.exe"),("PointerInput/version.dll","Engines/PointerInput/version.dll")] {
+            for (name,target) in [("OpenGameWindow.exe","bin/OpenGameWindow.exe"),("OpenGameGraphicsProbe.exe","bin/OpenGameGraphicsProbe.exe"),("OpenGameDLSSProbe.exe","bin/OpenGameDLSSProbe.exe"),("OpenGameD3D12Probe.exe","bin/OpenGameD3D12Probe.exe"),("steamwebhelper.exe","Engines/SteamCompat/steamwebhelper.exe"),("steamerrorreporter64.exe","Engines/SteamCompat/steamerrorreporter64.exe"),("PointerInput/version.dll","Engines/PointerInput/version.dll")] {
                 let source=resources.appendingPathComponent(name)
                 if let data=try? Data(contentsOf:source), (try? Data(contentsOf:path(target))) != data {
                     try data.write(to:path(target),options:.atomic)
@@ -93,14 +178,36 @@ final class OpenGameCore: @unchecked Sendable {
         guard url.resolvingSymlinksInPath().path.hasPrefix(base) else { throw OGError.message("容器路径必须位于 OpenGame 的 Prefixes 内。") }
         return url
     }
+    func effectiveRenderer(_ b:Bottle) -> Renderer {
+        guard b.renderer == .automatic else{return b.renderer}
+        if b.engineFamily == .foss,
+           fm.isExecutableFile(atPath:activeRuntimeRoot.appendingPathComponent("Engines/WineFOSS11-DXMT/bin/wine").path),rendererPack(.dxmt) != nil {return .dxmt}
+        return .wine
+    }
+    var dxmtExtensions:URL {activeRuntimeRoot.appendingPathComponent("Extensions/dxmt")}
+    func supportsDLSS(_ b:Bottle) -> Bool {
+        b.engineFamily == .foss && effectiveRenderer(b) == .dxmt &&
+        ["nvapi64.dll","nvngx.dll"].allSatisfy{file in
+            guard let data=try? Data(contentsOf:dxmtExtensions.appendingPathComponent("x86_64-windows/"+file)) else{return false}
+            return PEIcon.isExecutable(data)
+        }
+    }
+    func supportsHighResolution(_ b:Bottle) -> Bool { [.wine,.dxmt].contains(effectiveRenderer(b)) }
+    func supportsRenderer(_ renderer:Renderer,_ b:Bottle) -> Bool {
+        if renderer == .automatic {return true}
+        if renderer == .d3dmetal {return false}
+        var candidate=b;candidate.renderer=renderer
+        return fm.isExecutableFile(atPath:runtime(candidate).path) && (renderer == .wine || b.engineFamily != .foss || rendererPack(renderer) != nil)
+    }
     func runtime(_ b: Bottle) -> URL {
+        var b=b;b.renderer=effectiveRenderer(b)
+        if b.renderer == .d3dmetal {return path("Engines/Unavailable-D3DMetal/bin/wine")}
         if b.engineFamily == .foss {
             // DXMT includes Wine/Unix-side Metal patches in addition to its PE
             // renderer DLLs. Keep that complete build together instead of
             // mixing it with the base Wine process and wineserver.
             if b.renderer == .dxmt {
-                let dxmt=activeRuntimeRoot.appendingPathComponent("Engines/WineFOSS11-DXMT/bin/wine")
-                if fm.isExecutableFile(atPath:dxmt.path) {return dxmt}
+                return activeRuntimeRoot.appendingPathComponent("Engines/WineFOSS11-DXMT/bin/wine")
             }
             return activeRuntimeRoot.appendingPathComponent("Engines/WineFOSS11/bin/wine")
         }
@@ -108,7 +215,7 @@ final class OpenGameCore: @unchecked Sendable {
         return path("Engines/"+names[b.renderer]!+"/bin/wine")
     }
     func rendererPack(_ renderer:Renderer) -> URL? {
-        guard renderer != .wine else{return nil}
+        guard renderer == .dxmt || renderer == .dxvk else{return nil}
         let bundled=activeRuntimeRoot.appendingPathComponent("RendererPacks/"+renderer.rawValue)
         if fm.fileExists(atPath:bundled.path){return bundled}
         let legacy=path("Engines/WineFOSS11-"+renderer.rawValue.uppercased()+"/lib/wine")
@@ -148,9 +255,24 @@ final class OpenGameCore: @unchecked Sendable {
             }
             guard PEIcon.isExecutable(data) else{throw OGError.message("下载的 \(step.file) 不是 Windows 可执行文件。")}
             progress("正在安装 \(recipe.name)（\(index+1)/\(recipe.steps.count)）…")
-            let request=try spec(bottle:bottle,arguments:[target.path]+step.arguments,directory:downloads,logID:"recipe-\(bottle.id)-\(recipe.id)-\(index)")
+            var installerBottle=bottle
+            if recipe.id == "steam" {installerBottle.renderer = .wine;installerBottle.dlssEnabled=false}
+            var request=try spec(bottle:bottle,arguments:[target.path]+step.arguments,directory:downloads,logID:"recipe-\(bottle.id)-\(recipe.id)-\(index)")
+            if recipe.id == "steam" {
+                var env=try environment(installerBottle,runtimeURL:request.executable)
+                env["OPENGAME_STEAM_BOTTLE"]=bottle.id
+                env["OPENGAME_STEAM_MODE"]=bottle.effectiveSteamMode.rawValue
+                request=LaunchSpec(executable:request.executable,arguments:request.arguments,directory:request.directory,environment:env,log:request.log)
+            }
             let code=try wait(start(request),timeout:1800)
             guard code==0 || code==194 else{throw OGError.message("\(recipe.name) 安装程序返回 \(code)，请查看日志。")}
+        }
+        if recipe.id == "steam" {
+            let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
+            guard fm.fileExists(atPath:steam.path) else{throw OGError.message("Steam 安装器已退出，但未找到 Steam；请重试安装。")}
+            progress("正在配置 Steam 并打开登录窗口…")
+            try prepareSteamLaunchFiles(bottle)
+            _ = try start(spec(bottle:bottle,arguments:[steam.path],directory:steam.deletingLastPathComponent(),logID:"steam-\(bottle.id)"))
         }
         let stamp=try prefix(bottle).appendingPathComponent(".opengame-dependencies/"+recipe.id+".json")
         try fm.createDirectory(at:stamp.deletingLastPathComponent(),withIntermediateDirectories:true)
@@ -158,11 +280,26 @@ final class OpenGameCore: @unchecked Sendable {
         try JSONSerialization.data(withJSONObject:record,options:[.prettyPrinted,.sortedKeys]).write(to:stamp,options:.atomic)
     }
     func environment(_ b: Bottle,runtimeURL:URL?=nil) throws -> [String:String] {
+        var b=b;b.renderer=effectiveRenderer(b)
+        guard b.renderer != .d3dmetal else{throw OGError.message("独立运行核心尚不包含 D3DMetal。")}
         var env=ProcessInfo.processInfo.environment
         for k in Array(env.keys) where k.hasPrefix("CX_") || k.hasPrefix("WINE") || k.hasPrefix("DYLD_") || k.hasPrefix("DXVK_") || k.hasPrefix("DXMT_") { env.removeValue(forKey:k) }
-        env["WINEPREFIX"]=try prefix(b).path;env["WINEDEBUG"]="-all"
-        if b.engineFamily == .foss { env["WINEMSYNC"]="1" }
+        for key in ["SteamNoOverlayUI","SteamNoOverlayUIDrawing","DISABLE_VK_LAYER_VALVE_steam_overlay_1","OPENGAME_STEAM_BOTTLE","OPENGAME_STEAM_MODE","OPENGAME_RECONFIGURE"] {env.removeValue(forKey:key)}
+        env["WINEPREFIX"]=try prefix(b).path;env["WINEDEBUG"]=b.diagnosticsEnabled == true ? "+seh,+loaddll" : "-all"
+        if b.engineFamily == .foss { env["WINEMSYNC"]=b.usesMSync ? "1" : "0" }
+        guard [0,30,60,120].contains(b.effectiveFrameRateLimit) else {throw OGError.message("帧率上限必须为不限、30、60 或 120。")}
+        guard b.highResolution != true || supportsHighResolution(b) else{throw OGError.message("当前图形后端不支持高分辨率模式，请使用 Wine 或 DXMT。")}
+        if b.renderer == .dxmt && b.effectiveFrameRateLimit > 0 {
+            // DXMT parses this after dxmt.conf, preserving other user options.
+            env["DXMT_CONFIG"]="d3d11.preferredMaxFrameRate = \(b.effectiveFrameRateLimit)"
+        }
+        guard b.dlssEnabled != true || supportsDLSS(b) else{throw OGError.message("当前运行库不支持 DLSS，请安装匹配的 DXMT 扩展组件。")}
+        if b.renderer == .dxmt {
+            env["DXMT_ENABLE_NVEXT"]=b.dlssEnabled == true ? "1" : "0"
+            if b.dlssEnabled == true {env["WINEDLLPATH"]=dxmtExtensions.path}
+        }
         env["WINEDLLOVERRIDES"]="winemenubuilder.exe="+(b.renderer == .wine ? "" : ";dxgi,d3d11,d3d10core=b")+(b.renderer == .dxmt ? ";winemetal=b" : "")
+        if b.dlssEnabled == true {env["WINEDLLOVERRIDES"]! += ";nvapi64,nvngx=b"}
         let gst=activeRuntimeRoot.appendingPathComponent("Engines/Support/GStreamer.framework/Versions/1.0")
         env["GST_PLUGIN_PATH"]=gst.appendingPathComponent("lib/gstreamer-1.0").path
         env["GST_PLUGIN_SYSTEM_PATH"]=env["GST_PLUGIN_PATH"]
@@ -173,7 +310,26 @@ final class OpenGameCore: @unchecked Sendable {
         return env
     }
     private func ensureRendererFiles(_ bottle:Bottle) throws {
-        guard bottle.engineFamily == .foss,bottle.renderer != .wine else{return}
+        var bottle=bottle;bottle.renderer=effectiveRenderer(bottle)
+        guard bottle.engineFamily == .foss else{return}
+        if bottle.renderer == .wine {
+            let folder=try prefix(bottle),stamp=folder.appendingPathComponent(".opengame-renderer")
+            let old=(try? String(contentsOf:stamp,encoding:.utf8))?.trimmingCharacters(in:.whitespacesAndNewlines)
+            if old=="dxmt" || old=="dxvk" {
+                for (arch,targetFolder) in [("x86_64-windows","system32"),("i386-windows","syswow64")] {
+                    for name in ["d3d10core.dll","d3d11.dll","dxgi.dll"] {
+                        let target=folder.appendingPathComponent("drive_c/windows/\(targetFolder)/\(name)")
+                        let backup=folder.appendingPathComponent(".opengame-renderer-backup/\(targetFolder)/\(name)")
+                        if let data=try? Data(contentsOf:backup) {try data.write(to:target,options:.atomic)}
+                        else if let renderer=Renderer(rawValue:old ?? ""),let pack=rendererPack(renderer),
+                            let source=try? Data(contentsOf:pack.appendingPathComponent("\(arch)/\(name)")),
+                            (try? Data(contentsOf:target))==source {try fm.removeItem(at:target)}
+                    }
+                }
+                try "wine\n".write(to:stamp,atomically:true,encoding:.utf8)
+            }
+            return
+        }
         guard let pack=rendererPack(bottle.renderer) else{throw OGError.message("尚未安装 \(bottle.renderer.rawValue.uppercased()) 图形增量包。")}
         let prefixURL=try prefix(bottle)
         let stamp=prefixURL.appendingPathComponent(".opengame-renderer")
@@ -202,10 +358,7 @@ final class OpenGameCore: @unchecked Sendable {
                     try fm.copyItem(at:target,to:saved)
                 }
                 try fm.createDirectory(at:target.deletingLastPathComponent(),withIntermediateDirectories:true)
-                let temporary=target.deletingLastPathComponent().appendingPathComponent(".\(name).opengame-\(UUID().uuidString)")
-                try fm.copyItem(at:source,to:temporary)
-                if fm.fileExists(atPath:target.path){try fm.removeItem(at:target)}
-                try fm.moveItem(at:temporary,to:target)
+                try Data(contentsOf:source).write(to:target,options:.atomic)
             }
         }
         try desired.write(to:stamp,atomically:true,encoding:.utf8)
@@ -244,40 +397,124 @@ final class OpenGameCore: @unchecked Sendable {
         try process.run();guard try wait(process,timeout:30)==0 else{throw OGError.message("字体注册失败。")}
         try? fm.removeItem(at:registry);try "Liberation 2.1.5\n".write(to:marker,atomically:true,encoding:.utf8)
     }
+    // Link GDI's Latin UI fonts to an installed macOS CJK face. System fonts
+    // stay on this Mac: no copying into the app or redistributing Apple fonts.
+    static func cjkFontLinks(registry:String,key:String,fallback:String) -> [String:[String]] {
+        let names=["Tahoma","Microsoft Sans Serif","Segoe UI","Arial","Liberation Sans","MS Shell Dlg","MS Shell Dlg 2","System"]
+        let header="["+key.replacingOccurrences(of:"\\",with:"\\\\")+"]"
+        var section=false,existing:[String:String]=[:]
+        for line in registry.components(separatedBy:.newlines) {
+            if line.hasPrefix("[") {section=line.hasPrefix(header);continue}
+            guard section,line.hasPrefix("\""),let end=line.dropFirst().firstIndex(of:"\"") else{continue}
+            existing[String(line[line.index(after:line.startIndex)..<end])]=String(line[line.index(after:end)...])
+        }
+        var result:[String:[String]]=[:]
+        for name in names {
+            var values:[String]=[]
+            if let value=existing[name] {
+                // Preserve custom/unrecognized registry encodings untouched.
+                guard value.hasPrefix("=str(7):\""),value.hasSuffix("\"") else{continue}
+                values=String(value.dropFirst(9).dropLast()).components(separatedBy:"\\0").filter{!$0.isEmpty}
+                guard !values.contains(where:{$0.contains("\\\"")}) else{continue}
+                values=values.map{$0.replacingOccurrences(of:"\\\\",with:"\\")}
+            }
+            if !values.contains(fallback) {values.append(fallback);result[name]=values}
+        }
+        return result
+    }
+    private func registerHostCJKFonts(_ bottle:Bottle) throws {
+        let folder=try prefix(bottle),systemRegistry=folder.appendingPathComponent("system.reg")
+        guard let text=try? String(contentsOf:systemRegistry,encoding:.utf8) else{return}
+        let candidates=[("/System/Library/Fonts/STHeiti Medium.ttc","Heiti SC","Heiti SC Medium"),
+                        ("/System/Library/Fonts/Supplemental/Arial Unicode.ttf","Arial Unicode MS","Arial Unicode MS")]
+        // SystemLink needs the family name, not the full face name recorded in
+        // the Fonts key (Heiti SC Medium belongs to the Heiti SC family).
+        guard let (file,family,_)=candidates.first(where:{fm.fileExists(atPath:$0.0) && text.contains("\""+$0.2+" (TrueType)\"")}) else{return}
+        let fallback=URL(fileURLWithPath:file).lastPathComponent+","+family
+        let marker=folder.appendingPathComponent(".opengame-cjk-fonts"),desired="host-cjk-link-v2\n"+fallback+"\n"
+        guard (try? String(contentsOf:marker,encoding:.utf8)) != desired else{return}
+        // Wine shares this key across views. A second Wow6432Node import can
+        // reflect back into the first key and replace its preserved entries.
+        let keys=["Software\\Microsoft\\Windows NT\\CurrentVersion\\FontLink\\SystemLink"]
+        var content="Windows Registry Editor Version 5.00\n",backup=content
+        for key in keys {
+            let additions=Self.cjkFontLinks(registry:text,key:key,fallback:fallback)
+            guard !additions.isEmpty else{continue}
+            content += "\n[HKEY_LOCAL_MACHINE\\"+key+"]\n"
+            backup += "\n[HKEY_LOCAL_MACHINE\\"+key+"]\n"
+            let originalHeader="["+key.replacingOccurrences(of:"\\",with:"\\\\")+"]"
+            let section=text.components(separatedBy:originalHeader).dropFirst().first?.components(separatedBy:"\n[").first ?? ""
+            for name in additions.keys.sorted() {
+                let values=additions[name]!,data=(values.joined(separator:"\0")+"\0\0").data(using:.utf16LittleEndian)!
+                content += "\""+name+"\"=hex(7):"+data.map{String(format:"%02x",$0)}.joined(separator:",")+"\n"
+                let original=section.components(separatedBy:.newlines).first{$0.hasPrefix("\""+name+"\"=str(7):\"")}
+                let old=original == nil ? [] : Array(values.dropLast())
+                if original != nil {
+                    let bytes=(old.joined(separator:"\0")+"\0\0").data(using:.utf16LittleEndian)!
+                    backup += "\""+name+"\"=hex(7):"+bytes.map{String(format:"%02x",$0)}.joined(separator:",")+"\n"
+                } else {backup += "\""+name+"\"=-\n"}
+            }
+        }
+        let saved=path("Backups/Fonts/"+bottle.id+"-"+UUID().uuidString+".reg")
+        try fm.createDirectory(at:saved.deletingLastPathComponent(),withIntermediateDirectories:true)
+        try backup.write(to:saved,atomically:true,encoding:.utf16)
+        let registry=folder.appendingPathComponent("opengame-cjk-fonts.reg")
+        try content.write(to:registry,atomically:true,encoding:.utf16)
+        let process=Process();process.executableURL=runtime(bottle);process.arguments=["regedit","/S",registry.path];process.environment=try environment(bottle)
+        process.standardInput=FileHandle.nullDevice;process.standardOutput=FileHandle.nullDevice;process.standardError=FileHandle.nullDevice
+        try process.run();guard try wait(process,timeout:30)==0 else{throw OGError.message("中文字体回退注册失败。")}
+        try? fm.removeItem(at:registry);try desired.write(to:marker,atomically:true,encoding:.utf8)
+    }
     private func isSteamWebHelperWrapper(_ data:Data) -> Bool {
         let marker="steamwebhelper_real.exe".data(using:.utf16LittleEndian)!
         return data.range(of:marker) != nil
     }
-    private func latestOfficialSteamWebHelperBackup() -> Data? {
-        let directory=path("Backups/SteamCompat")
-        guard let entries=fm.enumerator(at:directory,includingPropertiesForKeys:[.contentModificationDateKey],options:[.skipsHiddenFiles]) else{return nil}
-        var candidates:[(Date,Data)]=[]
-        for case let file as URL in entries where file.lastPathComponent=="steamwebhelper.exe" {
-            guard let data=try? Data(contentsOf:file),PEIcon.isExecutable(data),!isSteamWebHelperWrapper(data) else{continue}
-            let date=(try? file.resourceValues(forKeys:[.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            candidates.append((date,data))
-        }
-        return candidates.max(by:{$0.0<$1.0})?.1
+    private func officialSteamWebHelperBackup(_ bottle:Bottle) -> Data? {
+        guard let folder=try? prefix(bottle) else{return nil}
+        let file=folder.appendingPathComponent("drive_c/Program Files (x86)/Steam/.opengame-original/steamwebhelper.exe")
+        guard let data=try? Data(contentsOf:file),PEIcon.isExecutable(data),!isSteamWebHelperWrapper(data) else{return nil}
+        return data
+    }
+    func nativeSteamProcessNames(_ bottle:Bottle) throws -> Set<String> {
+        let folder=try prefix(bottle)
+        let request=LaunchSpec(executable:runtime(bottle),arguments:[],directory:folder,environment:try environment(bottle),log:path("Logs/native-process.log"))
+        let owned=Set(nativeSessionProcesses(folder:folder.resolvingSymlinksInPath().path,spec:request).map{$0.pid})
+        guard !owned.isEmpty else{return []}
+        let data=try capturedOutput(URL(fileURLWithPath:"/bin/ps"),["-axo","pid=,comm="],timeout:3)
+        return Set(String(decoding:data,as:UTF8.self).split(separator:"\n").compactMap{line in
+            let fields=line.trimmingCharacters(in:.whitespaces).split(maxSplits:1,whereSeparator:{$0.isWhitespace})
+            guard fields.count==2,let pid=Int32(fields[0]),owned.contains(pid) else{return nil}
+            return fields[1].replacingOccurrences(of:"\\",with:"/").split(separator:"/").last.map{String($0).lowercased()}
+        })
+    }
+    static func steamUpdateCompleted(log:String) -> Bool {
+        // These diagnostic markers stay English even when updater UI is Chinese.
+        guard let pending=log.range(of:"Found pending update",options:.backwards),
+              let shutdown=log.range(of:"] Shutdown",options:.backwards),pending.lowerBound<shutdown.lowerBound else{return false}
+        if let startup=log.range(of:"Startup - Steam Client launched",options:.backwards),startup.lowerBound>shutdown.lowerBound {return false}
+        return true
     }
     // Steam updates restore its helper. After bootstrap, preserve the updated
     // Valve binary and install our parameter-only wrapper before restarting CEF.
     // All process operations use this bottle's WINEPREFIX, never a host-wide kill.
     func watchSteamUI(_ bottle:Bottle) throws {
-        guard !hasClosingMarker() else{return}
+        guard !hasClosingMarker(),bottle.effectiveSteamMode == .compatibility else{return}
         let fd=Darwin.open(try prefix(bottle).appendingPathComponent(".opengame-steam-watch.lock").path,O_CREAT|O_RDWR,0o600)
         guard fd>=0 else {throw OGError.message("无法锁定 Steam 界面监控。")}
         defer {flock(fd,LOCK_UN);Darwin.close(fd)}
         guard flock(fd,LOCK_EX|LOCK_NB)==0 else {return}
         let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam")
-        let helper=steam.appendingPathComponent("bin/cef/cef.win64/steamwebhelper.exe")
-        let realHelper=helper.deletingLastPathComponent().appendingPathComponent("steamwebhelper_real.exe")
         let wrapper=try Data(contentsOf:path("Engines/SteamCompat/steamwebhelper.exe"))
         guard PEIcon.isExecutable(wrapper) else {throw OGError.message("Steam 界面包装器无效。")}
         let reporter=steam.appendingPathComponent("steamerrorreporter64.exe")
         let reporterStub=try Data(contentsOf:path("Engines/SteamCompat/steamerrorreporter64.exe"))
         guard PEIcon.isExecutable(reporterStub) else {throw OGError.message("Steam 错误报告兼容组件无效。")}
         let selectedRuntime=runtime(bottle)
-        var uiBottle=bottle;uiBottle.renderer = .wine
+        let startedAt=Date(),installed=steam.appendingPathComponent("package/steam_client_win64.installed")
+        let initialInstalled=(try? Data(contentsOf:installed)).map{SHA256.hash(data:$0)}
+        let bootstrap=steam.appendingPathComponent("logs/bootstrap_log.txt")
+        var recoveredUpdate=false
+        var uiBottle=bottle;uiBottle.renderer = .wine;uiBottle.dlssEnabled=false
         func command(_ args:[String]) throws -> String {
             guard !hasClosingMarker() else{throw OGError.message("OpenGame 正在退出。") }
             let process=Process(),pipe=Pipe()
@@ -289,18 +526,35 @@ final class OpenGameCore: @unchecked Sendable {
             return String(data:pipe.fileHandleForReading.readDataToEndOfFile(),encoding:.utf8) ?? ""
         }
         var previous:[String:Data]=[:]
-        let deadline=Date().addingTimeInterval(90)
+        let deadline=Date().addingTimeInterval(1800)
         while Date()<deadline {
             Thread.sleep(forTimeInterval:2)
-            guard !hasClosingMarker() else{return}
+            guard !hasClosingMarker(),(try load().bottles.first{$0.id==bottle.id})?.effectiveSteamMode != .standard else{return}
+            let processNames=try nativeSteamProcessNames(bottle)
+            if !recoveredUpdate,!processNames.contains("steam.exe"),
+               let current=try? Data(contentsOf:installed),initialInstalled != SHA256.hash(data:current),
+               let modified=try bootstrap.resourceValues(forKeys:[.contentModificationDateKey]).contentModificationDate,modified>=startedAt,
+               let log=try? String(contentsOf:bootstrap,encoding:.utf8),Self.steamUpdateCompleted(log:log) {
+                // One bounded recovery only, after a verified official update
+                // transaction. Never relaunch an ordinary user-initiated exit.
+                recoveredUpdate=true
+                try prepareSteamLaunchFiles(bottle)
+                let file=steam.appendingPathComponent("steam.exe")
+                let request=try spec(bottle:bottle,arguments:[file.path],directory:steam,logID:"steam-"+bottle.id)
+                _ = try start(request)
+                print("Steam 官方更新已完成，正在恢复更新后的启动。")
+                continue
+            }
             var changedHelper=false
+            let helpers=["cef.win64","cef.win7x64"].map{steam.appendingPathComponent("bin/cef/\($0)/steamwebhelper.exe")}.filter{fm.fileExists(atPath:$0.path)}
+            for helper in helpers {
+            let realHelper=helper.deletingLastPathComponent().appendingPathComponent("steamwebhelper_real.exe")
             if let current=try? Data(contentsOf:helper),PEIcon.isExecutable(current),current != wrapper {
                 if previous[helper.path] == current {
-                    let tasks=try command(["tasklist","/FO","CSV","/NH"])
-                    guard tasks.lowercased().contains("\"steamwebhelper.exe\"") else {continue}
+                    guard processNames.contains("steamwebhelper.exe") || processNames.contains("steamwebhelper_real.exe") else {continue}
                     guard !hasClosingMarker() else{return}
                     if isSteamWebHelperWrapper(current) {
-                        let real=(try? Data(contentsOf:realHelper)).flatMap{PEIcon.isExecutable($0) && !isSteamWebHelperWrapper($0) ? $0 : nil} ?? latestOfficialSteamWebHelperBackup()
+                        let real=(try? Data(contentsOf:realHelper)).flatMap{PEIcon.isExecutable($0) && !isSteamWebHelperWrapper($0) ? $0 : nil} ?? officialSteamWebHelperBackup(bottle)
                         guard let real=real else{throw OGError.message("找不到 Steam 官方界面程序备份；请重新安装 Steam。")}
                         try real.write(to:realHelper,options:.atomic)
                     } else {
@@ -310,6 +564,9 @@ final class OpenGameCore: @unchecked Sendable {
                         let backup=path("Backups/SteamCompat/"+UUID().uuidString)
                         try fm.createDirectory(at:backup,withIntermediateDirectories:true)
                         try current.write(to:backup.appendingPathComponent("steamwebhelper.exe"),options:.atomic)
+                        let local=steam.appendingPathComponent(".opengame-original/"+helper.deletingLastPathComponent().lastPathComponent)
+                        try fm.createDirectory(at:local,withIntermediateDirectories:true)
+                        try current.write(to:local.appendingPathComponent("steamwebhelper.exe"),options:.atomic)
                         try current.write(to:realHelper,options:.atomic)
                     }
                     try wrapper.write(to:helper,options:.atomic)
@@ -318,36 +575,44 @@ final class OpenGameCore: @unchecked Sendable {
             } else {previous.removeValue(forKey:helper.path)}
             if let current=try? Data(contentsOf:helper),current==wrapper,
                ((try? Data(contentsOf:realHelper)).map{!PEIcon.isExecutable($0) || isSteamWebHelperWrapper($0)} ?? true),
-               let official=latestOfficialSteamWebHelperBackup() {
+               let official=officialSteamWebHelperBackup(bottle) {
                 try official.write(to:realHelper,options:.atomic)
                 changedHelper=true
+            }
             }
             if let current=try? Data(contentsOf:reporter),PEIcon.isExecutable(current),current != reporterStub {
                 if previous[reporter.path] == current {
                     let backup=path("Backups/SteamCompat/"+UUID().uuidString)
                     try fm.createDirectory(at:backup,withIntermediateDirectories:true)
                     try current.write(to:backup.appendingPathComponent(reporter.lastPathComponent),options:.atomic)
+                    let local=steam.appendingPathComponent(".opengame-original")
+                    try fm.createDirectory(at:local,withIntermediateDirectories:true)
+                    try current.write(to:local.appendingPathComponent("steamerrorreporter64.exe"),options:.atomic)
                     try reporterStub.write(to:reporter,options:.atomic)
                 } else {previous[reporter.path]=current}
             } else {previous.removeValue(forKey:reporter.path)}
-            let helperReady=(try? Data(contentsOf:helper))==wrapper && ((try? Data(contentsOf:realHelper)).map{PEIcon.isExecutable($0) && !isSteamWebHelperWrapper($0)} ?? false)
+            let helperReady = !helpers.isEmpty && helpers.allSatisfy{helper in
+                let real=helper.deletingLastPathComponent().appendingPathComponent("steamwebhelper_real.exe")
+                return (try? Data(contentsOf:helper))==wrapper && ((try? Data(contentsOf:real)).map{PEIcon.isExecutable($0) && !isSteamWebHelperWrapper($0)} ?? false)
+            }
             let reporterReady=(try? Data(contentsOf:reporter))==reporterStub
             if changedHelper {_ = try command(["taskkill","/IM","steamwebhelper.exe","/F"])}
-            if helperReady && reporterReady {
+            if helperReady && reporterReady && processNames.contains("steam.exe") && processNames.contains("steamwebhelper_real.exe") {
                 print("Steam 界面与错误报告兼容组件已就绪；官方文件已备份。")
                 return
             }
+            if Date().timeIntervalSince(startedAt)>120 && !processNames.contains("steam.exe") && !processNames.contains("steamwebhelper_real.exe") {return}
         }
     }
     func spec(bottle: Bottle, arguments: [String], directory: URL, logID: String, initialized: Bool=true) throws -> LaunchSpec {
         let wine=runtime(bottle)
-        guard fm.isExecutableFile(atPath:wine.path) else { throw OGError.message("未找到 Wine 运行库：\(wine.path)") }
+        guard fm.isExecutableFile(atPath:wine.path) else { throw OGError.message("未找到所选图形后端的完整运行库：\(wine.path)。请重新安装完整包。") }
         let prefixURL = try prefix(bottle)
         if initialized && !fm.fileExists(atPath:prefixURL.appendingPathComponent("system.reg").path) { throw OGError.message("容器尚未完成初始化。") }
-        if initialized {try ensureRendererFiles(bottle)}
+        if initialized {try ensureRendererFiles(bottle);try ensureExtensionFiles(bottle);try registerBundledFonts(bottle);try registerHostCJKFonts(bottle)}
         // Prefixes created before DXMT lack its Wine builtin module placeholder.
         // Register only the missing DXMT bridge; preserve existing game DLLs.
-        if initialized && bottle.renderer == .dxmt {
+        if initialized && effectiveRenderer(bottle) == .dxmt {
             for (arch,folder) in [("x86_64-windows","system32"),("i386-windows","syswow64")] {
                 let target=prefixURL.appendingPathComponent("drive_c/windows/\(folder)/winemetal.dll")
                 if !fm.fileExists(atPath:target.path) {
@@ -360,43 +625,67 @@ final class OpenGameCore: @unchecked Sendable {
         let safeID=logID.replacingOccurrences(of:"/",with:"_")
         var actualArguments=arguments;var env=try environment(bottle)
         if initialized,let first=arguments.first,first.hasPrefix("/"),URL(fileURLWithPath:first).lastPathComponent.lowercased()=="steam.exe" {
-            var uiBottle=bottle;uiBottle.renderer = .wine
+            var uiBottle=bottle;uiBottle.renderer = .wine;uiBottle.dlssEnabled=false
             // Steam's CEF uses the Wine renderer, but it must share the exact
             // Wine binary, Unix modules and wineserver selected for the game.
             // Mixing the base build with DXMT makes later D3D11 device creation
             // depend on launch order.
+            // Steam launches games as children; keep the game frame cap in its
+            // environment even though CEF itself uses Wine rendering.
+            let gameRenderConfig=env["DXMT_CONFIG"]
+            let gameExtension=env["DXMT_ENABLE_NVEXT"],gameDLLPath=env["WINEDLLPATH"]
             env=try environment(uiBottle,runtimeURL:wine)
+            env["DXMT_CONFIG"]=gameRenderConfig
+            env["DXMT_ENABLE_NVEXT"]=gameExtension;env["WINEDLLPATH"]=gameDLLPath
+            if bottle.dlssEnabled == true {env["WINEDLLOVERRIDES"]! += ";nvapi64,nvngx=b"}
             env["OPENGAME_STEAM_BOTTLE"]=bottle.id
-            env["SteamNoOverlayUI"]="1"
-            env["SteamNoOverlayUIDrawing"]="1"
-            env["DISABLE_VK_LAYER_VALVE_steam_overlay_1"]="1"
-            for flag in ["-noverifyfiles","-cef-disable-gpu"] where !actualArguments.contains(flag) {actualArguments.insert(flag,at:1)}
+            env["OPENGAME_STEAM_MODE"]=bottle.effectiveSteamMode.rawValue
+            if !bottle.usesSteamOverlay {
+                env["SteamNoOverlayUI"]="1";env["SteamNoOverlayUIDrawing"]="1";env["DISABLE_VK_LAYER_VALVE_steam_overlay_1"]="1"
+            }
+            if bottle.effectiveSteamMode == .compatibility {
+                var flags=["-cef-disable-gpu"]
+                // The small official installer contains only the updater.
+                // Its first launch must verify and download the full client.
+                if fm.fileExists(atPath:URL(fileURLWithPath:first).deletingLastPathComponent().appendingPathComponent("steamclient.dll").path) {flags.append("-noverifyfiles")}
+                for flag in flags where !actualArguments.contains(flag) {actualArguments.insert(flag,at:1)}
+            }
         }
         return LaunchSpec(executable:wine,arguments:actualArguments,directory:directory,environment:env,log:path("Logs/\(safeID).log"))
     }
     func gameSpec(_ game: Game) throws -> LaunchSpec {
         let lib=try load();guard let b=lib.bottles.first(where:{$0.id==game.bottleID}) else { throw OGError.message("游戏对应的容器不存在。") }
         guard fm.fileExists(atPath:game.executable) else { throw OGError.message("游戏文件已移动或不存在：\(game.executable)") }
-        if let appID=game.steamID,URL(fileURLWithPath:game.executable).lastPathComponent.lowercased() != "steam.exe" {
+        if let appID=game.steamID {
             guard !appID.isEmpty,appID.allSatisfy({$0.isASCII && $0.isNumber}) else {throw OGError.message("Steam 游戏编号无效。")}
+            if let installation=game.steamInstallation {
+                guard installation.state == .installed else{throw OGError.message("\(game.title)：\(installation.label)。请在 Steam 中完成安装或更新，再刷新游戏库。")}
+                guard fm.fileExists(atPath:installation.manifest),fm.fileExists(atPath:installation.directory) else{throw OGError.message("游戏安装已移动或卸载，请刷新游戏库。")}
+                guard let app=try steamValues(URL(fileURLWithPath:installation.manifest))["appstate"]?.object,app["appid"]?.text==appID,
+                      let flags=app["stateflags"]?.text.flatMap(UInt64.init),flags&4 != 0 else{throw OGError.message("Steam 安装状态已变化，请刷新游戏库。")}
+            }
             let steam=try prefix(b).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
             guard fm.fileExists(atPath:steam.path) else{throw OGError.message("未找到 Steam，请先在这个容器中安装 Steam。")}
-            let launch=try spec(bottle:b,arguments:[steam.path,"-applaunch",appID]+game.arguments,directory:steam.deletingLastPathComponent(),logID:game.id)
+            var arguments=game.arguments
+            if arguments.count>=2,arguments[0]=="-applaunch",arguments[1]==appID {arguments=Array(arguments.dropFirst(2))}
+            let launch=try spec(bottle:b,arguments:[steam.path,"-applaunch",appID]+arguments,directory:steam.deletingLastPathComponent(),logID:game.id)
             var env=launch.environment;env["SteamAppId"]=appID;env["SteamGameId"]=appID;env["OPENGAME_STEAM_BOTTLE"]=b.id
             // Steam's injected D3D overlay requests a cross-process swapchain,
             // which DXMT 0.80 cannot create and can crash Unity during startup.
             // Keep the Steam client running for ownership/networking while the
             // game renders without the optional overlay.
-            env["SteamNoOverlayUI"]="1"
-            env["SteamNoOverlayUIDrawing"]="1"
-            env["DISABLE_VK_LAYER_VALVE_steam_overlay_1"]="1"
+            if !b.usesSteamOverlay {
+                env["SteamNoOverlayUI"]="1";env["SteamNoOverlayUIDrawing"]="1";env["DISABLE_VK_LAYER_VALVE_steam_overlay_1"]="1"
+            }
             return LaunchSpec(executable:launch.executable,arguments:launch.arguments,directory:launch.directory,environment:env,log:launch.log)
         }
         return try spec(bottle:b,arguments:[game.executable]+game.arguments,directory:URL(fileURLWithPath:game.workingDirectory),logID:game.id)
     }
-    private func prepareSteamLaunchFiles(_ bottle:Bottle) throws {
+    func prepareSteamLaunchFiles(_ bottle:Bottle) throws {
+        if bottle.effectiveSteamMode == .standard {try restoreSteamFiles(bottle);return}
         let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam")
-        let helper=steam.appendingPathComponent("bin/cef/cef.win64/steamwebhelper.exe")
+        for variant in ["cef.win64","cef.win7x64"] {
+        let helper=steam.appendingPathComponent("bin/cef/\(variant)/steamwebhelper.exe")
         let realHelper=helper.deletingLastPathComponent().appendingPathComponent("steamwebhelper_real.exe")
         let wrapper=try Data(contentsOf:path("Engines/SteamCompat/steamwebhelper.exe"))
         guard PEIcon.isExecutable(wrapper) else {throw OGError.message("Steam 界面包装器无效。")}
@@ -404,7 +693,7 @@ final class OpenGameCore: @unchecked Sendable {
             if isSteamWebHelperWrapper(current) {
                 let validReal=(try? Data(contentsOf:realHelper)).map{PEIcon.isExecutable($0) && !isSteamWebHelperWrapper($0)} ?? false
                 if !validReal {
-                    guard let official=latestOfficialSteamWebHelperBackup() else {throw OGError.message("找不到 Steam 官方界面程序备份；请重新安装 Steam。")}
+                    guard variant == "cef.win64",let official=officialSteamWebHelperBackup(bottle) else {throw OGError.message("找不到 Steam 官方界面程序备份；请重新安装 Steam。")}
                     try official.write(to:realHelper,options:.atomic)
                 }
             } else {
@@ -414,9 +703,13 @@ final class OpenGameCore: @unchecked Sendable {
                 let backup=path("Backups/SteamCompat/"+UUID().uuidString)
                 try fm.createDirectory(at:backup,withIntermediateDirectories:true)
                 try current.write(to:backup.appendingPathComponent("steamwebhelper.exe"),options:.atomic)
-                try current.write(to:realHelper,options:.atomic)
+                let local=steam.appendingPathComponent(".opengame-original/"+variant)
+                        try fm.createDirectory(at:local,withIntermediateDirectories:true)
+                        try current.write(to:local.appendingPathComponent("steamwebhelper.exe"),options:.atomic)
+                        try current.write(to:realHelper,options:.atomic)
                 try wrapper.write(to:helper,options:.atomic)
             }
+        }
         }
         let reporter=steam.appendingPathComponent("steamerrorreporter64.exe")
         let stub=path("Engines/SteamCompat/steamerrorreporter64.exe")
@@ -424,6 +717,9 @@ final class OpenGameCore: @unchecked Sendable {
             let backup=path("Backups/SteamCompat/"+UUID().uuidString)
             try fm.createDirectory(at:backup,withIntermediateDirectories:true)
             try current.write(to:backup.appendingPathComponent(reporter.lastPathComponent),options:.atomic)
+            let local=steam.appendingPathComponent(".opengame-original")
+            try fm.createDirectory(at:local,withIntermediateDirectories:true)
+            try current.write(to:local.appendingPathComponent("steamerrorreporter64.exe"),options:.atomic)
             try replacement.write(to:reporter,options:.atomic)
         }
         // Steam's non-atomic Wine update path can leave byte-identical backups
@@ -433,6 +729,66 @@ final class OpenGameCore: @unchecked Sendable {
             let current=steam.appendingPathComponent(name),old=steam.appendingPathComponent(oldName)
             if let a=try? Data(contentsOf:current),let b=try? Data(contentsOf:old),a==b {try? fm.removeItem(at:old)}
         }
+    }
+    func ensureExtensionFiles(_ bottle:Bottle) throws {
+        guard bottle.engineFamily == .foss else{return}
+        guard bottle.dlssEnabled != true || supportsDLSS(bottle) else{throw OGError.message("缺少完整、匹配的 DXMT 扩展组件。")}
+        let folder=try prefix(bottle),backup=folder.appendingPathComponent(".opengame-extension-backup")
+        for name in ["nvapi64.dll","nvngx.dll"] {
+            let source=dxmtExtensions.appendingPathComponent("x86_64-windows/"+name)
+            let target=folder.appendingPathComponent("drive_c/windows/system32/"+name)
+            let marker=backup.appendingPathComponent(name+".installed")
+            if bottle.dlssEnabled == true {
+                let desired=try Data(contentsOf:source)
+                if (try? Data(contentsOf:target))==desired {continue}
+                try fm.createDirectory(at:backup,withIntermediateDirectories:true)
+                try fm.createDirectory(at:target.deletingLastPathComponent(),withIntermediateDirectories:true)
+                let original=backup.appendingPathComponent(name)
+                if let data=try? Data(contentsOf:target),(try? Data(contentsOf:marker)) != data {try data.write(to:original,options:.atomic)}
+                try desired.write(to:target,options:.atomic);try desired.write(to:marker,options:.atomic)
+            } else if let installed=try? Data(contentsOf:marker),let current=try? Data(contentsOf:target),current==installed {
+                let original=backup.appendingPathComponent(name)
+                if let data=try? Data(contentsOf:original) {try data.write(to:target,options:.atomic)}
+                else {try fm.removeItem(at:target)}
+                try fm.removeItem(at:marker)
+            }
+        }
+    }
+    func applyHighResolution(_ bottle:Bottle) throws {
+        guard supportsHighResolution(bottle) || bottle.highResolution != true else{throw OGError.message("当前图形后端不支持高分辨率模式。")}
+        let folder=try prefix(bottle)
+        let registry=folder.appendingPathComponent(".opengame-display.reg")
+        let value=bottle.highResolution == true ? "Y" : "N"
+        let content="Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Wine\\Mac Driver]\r\n\"RetinaMode\"=\"\(value)\"\r\n"
+        try content.write(to:registry,atomically:true,encoding:.utf16)
+        let request=try spec(bottle:bottle,arguments:["regedit","/S",registry.path],directory:folder,logID:"display-"+bottle.id)
+        let applying=LaunchSpec(executable:request.executable,arguments:request.arguments,directory:request.directory,environment:request.environment.merging(["OPENGAME_RECONFIGURE":"1"]){_,new in new},log:request.log)
+        guard try wait(start(applying),timeout:20)==0 else{throw OGError.message("高分辨率设置未成功写入，详情见日志。")}
+        let server=runtime(bottle).deletingLastPathComponent().appendingPathComponent("wineserver")
+        // updateBottle checks idle before this operation; end only the settings session.
+        let p=Process();p.executableURL=server;p.arguments=["-k"];p.environment=request.environment
+        p.standardOutput=FileHandle.nullDevice;p.standardError=FileHandle.nullDevice
+        try p.run();guard try wait(p,timeout:5)==0 else{throw OGError.message("显示设置会话尚未结束。")}
+    }
+    func restoreSteamFiles(_ bottle:Bottle) throws {
+        let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam")
+        var replacements:[(URL,Data)]=[]
+        for variant in ["cef.win64","cef.win7x64"] {
+        let helper=steam.appendingPathComponent("bin/cef/\(variant)/steamwebhelper.exe")
+        if let current=try? Data(contentsOf:helper),isSteamWebHelperWrapper(current) {
+            let real=helper.deletingLastPathComponent().appendingPathComponent("steamwebhelper_real.exe")
+            guard let data=try? Data(contentsOf:real),PEIcon.isExecutable(data),!isSteamWebHelperWrapper(data) else{throw OGError.message("缺少此容器的 Steam 官方界面备份，请先修复 Steam 安装。")}
+            replacements.append((helper,data))
+        }
+        }
+        let reporter=steam.appendingPathComponent("steamerrorreporter64.exe")
+        if let stub=try? Data(contentsOf:path("Engines/SteamCompat/steamerrorreporter64.exe")),let current=try? Data(contentsOf:reporter),current==stub {
+            let backup=steam.appendingPathComponent(".opengame-original/steamerrorreporter64.exe")
+            guard let data=try? Data(contentsOf:backup),PEIcon.isExecutable(data),data != stub else{throw OGError.message("缺少此容器的 Steam 官方错误报告器备份，请先修复 Steam 安装。")}
+            replacements.append((reporter,data))
+        }
+        // Validate every replacement before restoring either file.
+        for (target,data) in replacements {try data.write(to:target,options:.atomic)}
     }
     func prepareGameInput(for game:Game) throws {
         // Only the verified Unity 6 game receives this compatibility profile.
@@ -456,15 +812,16 @@ final class OpenGameCore: @unchecked Sendable {
         guard try wait(process,timeout:10)==0 else{throw OGError.message("无法启用游戏鼠标兼容组件，详情见日志。")}
     }
     func prepareSteam(for game:Game) throws {
-        guard game.steamID != nil,URL(fileURLWithPath:game.executable).lastPathComponent.lowercased() != "steam.exe" else{return}
+        guard game.steamID != nil else{return}
         let lib=try load();guard let bottle=lib.bottles.first(where:{$0.id==game.bottleID}) else{throw OGError.message("游戏对应的容器不存在。")}
         let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
         guard fm.fileExists(atPath:steam.path) else{return}
         try prepareSteamLaunchFiles(bottle)
         let request=try spec(bottle:bottle,arguments:[steam.path],directory:steam.deletingLastPathComponent(),logID:"steam-"+bottle.id)
         func tasks() -> Set<String> {
-            Set(((try? windowsTaskNames(request)) ?? [])+((try? nativeWindowsTaskNames()) ?? []))
+            (try? nativeSteamProcessNames(bottle)) ?? []
         }
+        let launchedAt=Date()
         let wasRunning=tasks().contains("steam.exe")
         if !wasRunning {_=try start(request)}
         let deadline=Date().addingTimeInterval(90)
@@ -472,7 +829,7 @@ final class OpenGameCore: @unchecked Sendable {
         var loggedOnSince:Date?
         while Date()<deadline {
             let current=tasks()
-            if current.contains("steam.exe") && (current.contains("steamwebhelper.exe") || current.contains("steamwebhelper_real.exe")) && steamIsLoggedOn(steam.deletingLastPathComponent()) {
+            if current.contains("steam.exe") && (current.contains("steamwebhelper.exe") || current.contains("steamwebhelper_real.exe")) && steamIsLoggedOn(steam.deletingLastPathComponent(),since:wasRunning ? nil : launchedAt) {
                 if loggedOnSince == nil {loggedOnSince=Date()}
                 readySnapshots += 1
                 // A second steam.exe invocation can be lost between account
@@ -485,9 +842,15 @@ final class OpenGameCore: @unchecked Sendable {
         }
         throw OGError.message("Steam 启动超时，请先打开 Steam 后重试。")
     }
-    func steamIsLoggedOn(_ steamDirectory:URL) -> Bool {
+    func steamIsLoggedOn(_ steamDirectory:URL,since:Date?=nil) -> Bool {
         let connectionLog=steamDirectory.appendingPathComponent("logs/connection_log.txt")
-        guard let data=try? Data(contentsOf:connectionLog) else{return false}
+        if let since {
+            guard let date=(try? fm.attributesOfItem(atPath:connectionLog.path))?[.modificationDate] as? Date,date>=since else{return false}
+        }
+        guard let file=try? FileHandle(forReadingFrom:connectionLog) else{return false}
+        defer{try? file.close()}
+        guard let size=try? file.seekToEnd(),(try? file.seek(toOffset:size>512*1024 ? size-512*1024 : 0)) != nil,
+              let data=try? file.read(upToCount:512*1024) else{return false}
         // The tail can begin in the middle of a multibyte log character. A
         // lossy UTF-8 decode preserves the ASCII connection-state markers.
         let text=String(decoding:data.suffix(512*1024),as:UTF8.self)
@@ -497,6 +860,7 @@ final class OpenGameCore: @unchecked Sendable {
         return off == nil || on > off!
     }
     func runningGameStatus(_ game:Game) throws -> String? {
+        if game.steamID != nil,game.steamInstallation != nil {return try nativeRunningGameStatus(game)}
         // Steam.exe is a launcher shared by many games, not a game identity.
         guard URL(fileURLWithPath:game.executable).lastPathComponent.lowercased() != "steam.exe" else{return nil}
         if let native=try nativeRunningGameStatus(game) {return native}
@@ -523,24 +887,50 @@ final class OpenGameCore: @unchecked Sendable {
         if activateNativeGame(pid) {return "\(game.title) 已在运行，已请求显示原游戏窗口。"}
         return "\(game.title) 已在运行；请切换到游戏窗口。"
     }
-    private func nativeGamePID(_ game:Game) throws -> Int32? {
-        // Direct Wine launches retain the absolute game path as their host
-        // process name. Steam launches expose the corresponding C:\ path.
-        // Match a complete path in either form, never just a common EXE name.
+    func isGameRunning(_ game:Game) -> Bool {(try? nativeGamePID(game)) != nil}
+    private func windowsPath(_ file:String,bottle:Bottle) throws -> String? {
+        let drives=try prefix(bottle).appendingPathComponent("dosdevices")
+        let mappings=(try? fm.contentsOfDirectory(at:drives,includingPropertiesForKeys:nil)) ?? []
+        let candidates=mappings.filter{$0.lastPathComponent.count==2 && $0.lastPathComponent.hasSuffix(":")}.compactMap{drive -> (String,String)? in
+            let base=drive.resolvingSymlinksInPath().path
+            guard base=="/" || file==base || file.hasPrefix(base+"/") else{return nil}
+            let count=min(file.count,base=="/" ? 1 : base.count+1)
+            let suffix=String(file.dropFirst(count)).replacingOccurrences(of:"/",with:"\\")
+            return (base,drive.lastPathComponent.uppercased()+"\\"+suffix)
+        }.sorted{a,b in a.0.count==b.0.count ? a.1<b.1 : a.0.count>b.0.count}
+        return candidates.first?.1
+    }
+    func runningGameIDs(_ games:[Game]) -> Set<String> {Set(((try? nativeGamePIDs(games)) ?? [:]).keys)}
+    private func nativeGamePID(_ game:Game) throws -> Int32? {try nativeGamePIDs([game])[game.id]}
+    private func nativeGamePIDs(_ games:[Game]) throws -> [String:Int32] {
+        guard !games.isEmpty else{return [:]}
+        let library=try load(),bottles=Dictionary(uniqueKeysWithValues:library.bottles.map{($0.id,$0)})
         let data=try capturedOutput(URL(fileURLWithPath:"/bin/ps"),["-axo","pid=,comm="],timeout:3)
-        let text=String(decoding:data,as:UTF8.self)
-        var candidates=Set([game.executable.lowercased()])
-        let marker="/drive_c/"
-        if let range=game.executable.lowercased().range(of:marker) {
-            let suffix=game.executable[range.upperBound...].replacingOccurrences(of:"/",with:"\\")
-            candidates.insert("c:\\"+suffix.lowercased())
-        }
-        for line in text.split(separator:"\n") {
+        let processes:[(Int32,String)]=String(decoding:data,as:UTF8.self).split(separator:"\n").compactMap{line in
             let fields=line.trimmingCharacters(in:.whitespaces).split(maxSplits:1,whereSeparator:{$0.isWhitespace})
-            guard fields.count==2,candidates.contains(fields[1].lowercased()),let pid=Int32(fields[0]) else{continue}
-            return pid
+            guard fields.count==2,let pid=Int32(fields[0]) else{return nil};return (pid,fields[1].lowercased())
         }
-        return nil
+        var owners:[String:Set<Int32>]=[:],result:[String:Int32]=[:]
+        for game in games {
+            guard let bottle=bottles[game.bottleID] else{continue}
+            if owners[bottle.id]==nil {
+                let folder=try prefix(bottle),request=LaunchSpec(executable:runtime(bottle),arguments:[],directory:folder,environment:try environment(bottle),log:path("Logs/native-process.log"))
+                owners[bottle.id]=Set(nativeSessionProcesses(folder:folder.resolvingSymlinksInPath().path,spec:request).map{$0.pid})
+            }
+            guard let owned=owners[bottle.id],!owned.isEmpty else{continue}
+            var exact=Set([game.executable.lowercased()]),prefixes:[String]=[]
+            if game.steamID != nil,URL(fileURLWithPath:game.executable).lastPathComponent.lowercased()=="steam.exe" {
+                guard let installation=game.steamInstallation else{continue}
+                exact=[];prefixes=[installation.directory.lowercased()+"/"]
+                if let windows=try windowsPath(installation.directory,bottle:bottle){prefixes.append(windows.lowercased()+"\\")}
+            } else if let windows=try windowsPath(game.executable,bottle:bottle){exact.insert(windows.lowercased())}
+            for (pid,name) in processes where owned.contains(pid) {
+                let basename=name.replacingOccurrences(of:"\\",with:"/").split(separator:"/").last.map(String.init) ?? ""
+                let inInstallation=prefixes.contains(where:{name.hasPrefix($0)}) && name.hasSuffix(".exe") && !["unitycrashhandler64.exe","crashreporter.exe","vcredist.exe","setup.exe","unins000.exe"].contains(basename)
+                if exact.contains(name) || inInstallation {result[game.id]=pid;break}
+            }
+        }
+        return result
     }
     private func activateNativeGame(_ game:Game) throws -> Bool {
         guard let pid=try nativeGamePID(game) else{return false}
@@ -562,17 +952,26 @@ final class OpenGameCore: @unchecked Sendable {
             guard candidate.hasPrefix(root.resolvingSymlinksInPath().path+"/Prefixes/") else{throw OGError.message("拒绝管理 OpenGame 之外的容器。")}
             sessionSpecs[candidate]=spec
         }
+        var configurationLock:Int32 = -1
+        if let folder=spec.environment["WINEPREFIX"],spec.environment["OPENGAME_RECONFIGURE"] != "1" {
+            configurationLock=Darwin.open(URL(fileURLWithPath:folder).appendingPathComponent(".opengame-configuration.lock").path,O_CREAT|O_RDWR,0o600)
+            guard configurationLock>=0 else{throw OGError.message("无法锁定容器启动。")}
+            guard flock(configurationLock,LOCK_SH|LOCK_NB)==0 else{Darwin.close(configurationLock);throw OGError.message("容器正在更改设置，请稍后启动程序。")}
+        }
+        defer{if configurationLock>=0{flock(configurationLock,LOCK_UN);Darwin.close(configurationLock)}}
         try fm.createDirectory(at:spec.log.deletingLastPathComponent(),withIntermediateDirectories:true)
         if !fm.fileExists(atPath:spec.log.path) { fm.createFile(atPath:spec.log.path,contents:nil) }
         let log=try FileHandle(forWritingTo:spec.log);try log.seekToEnd()
-        let header="\n[OpenGame \(ISO8601DateFormatter().string(from:Date()))] Runtime: \(spec.executable.path)\n"
+        let diagnosticKeys=["WINEMSYNC","WINEDLLOVERRIDES","WINEDLLPATH","DXMT_CONFIG","DXMT_ENABLE_NVEXT","OPENGAME_STEAM_MODE","SteamNoOverlayUI"]
+        let settings=diagnosticKeys.compactMap{key in spec.environment[key].map{"\(key)=\($0)"}}.joined(separator:"\n")
+        let header="\n[OpenGame \(ISO8601DateFormatter().string(from:Date()))] Runtime: \(spec.executable.path)\n\(settings)\n"
         try log.write(contentsOf:Data(header.utf8))
         let p=Process();p.executableURL=spec.executable;p.arguments=spec.arguments;p.environment=spec.environment;p.currentDirectoryURL=spec.directory
         p.standardInput=FileHandle.nullDevice;p.standardOutput=log;p.standardError=log
         do { try p.run() } catch { try? log.close();throw error }
         children.removeAll{!$0.isRunning};children.append(p)
         // Child owns duplicated descriptors after spawn; close the parent's copies.
-        if let bottleID=spec.environment["OPENGAME_STEAM_BOTTLE"] {
+        if let bottleID=spec.environment["OPENGAME_STEAM_BOTTLE"],spec.environment["OPENGAME_STEAM_MODE"] != SteamMode.standard.rawValue {
             let watcher=Process()
             let sibling=URL(fileURLWithPath:CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("OpenGameCLI")
             watcher.executableURL=fm.isExecutableFile(atPath:sibling.path) ? sibling : path("bin/OpenGameCLI")
@@ -640,17 +1039,16 @@ final class OpenGameCore: @unchecked Sendable {
             _ = try? log.close()
         }
     }
-    private func nativeWindowsTaskNames() throws -> [String] {
-        let data=try capturedOutput(URL(fileURLWithPath:"/bin/ps"),["-axo","comm="],timeout:3)
-        let text=String(decoding:data,as:UTF8.self)
-        let expression=try NSRegularExpression(pattern:"(?i)([a-z0-9_.-]+\\.exe)(?:\\s|$)")
-        var names=Set<String>()
-        for line in text.split(separator:"\n") {
-            let value=String(line),range=NSRange(value.startIndex...,in:value)
-            guard let match=expression.firstMatch(in:value,range:range),let capture=Range(match.range(at:1),in:value) else{continue}
-            names.insert(String(value[capture]).lowercased())
+    private func nativeWindowsTaskNames(_ spec:LaunchSpec) throws -> [String] {
+        guard let folder=spec.environment["WINEPREFIX"] else{return []}
+        let owned=Set(nativeSessionProcesses(folder:folder,spec:spec).map{ $0.pid })
+        guard !owned.isEmpty else{return []}
+        let data=try capturedOutput(URL(fileURLWithPath:"/bin/ps"),["-axo","pid=,comm="],timeout:3)
+        return String(decoding:data,as:UTF8.self).split(separator:"\n").compactMap {line in
+            let fields=line.trimmingCharacters(in:.whitespaces).split(maxSplits:1,whereSeparator:{$0.isWhitespace})
+            guard fields.count==2,let pid=Int32(fields[0]),owned.contains(pid) else{return nil}
+            return URL(fileURLWithPath:String(fields[1]).replacingOccurrences(of:"\\",with:"/")).lastPathComponent.lowercased()
         }
-        return names.sorted()
     }
     private func closeResidualSteamHelpers(_ spec:LaunchSpec,fallback:[String]) throws -> Bool {
         let infrastructure:Set<String>=["services.exe","explorer.exe","rpcss.exe","svchost.exe","winedevice.exe","plugplay.exe","conhost.exe","start.exe","tasklist.exe","wineboot.exe","winedbg.exe","steamservice.exe"]
@@ -661,7 +1059,7 @@ final class OpenGameCore: @unchecked Sendable {
         // Native process names let us distinguish that known residue from a
         // still-running game after Steam has accepted the end-session request.
         if spec.environment["OPENGAME_STEAM_BOTTLE"] != nil {
-            currentTasks.formUnion(try nativeWindowsTaskNames())
+            currentTasks.formUnion(try nativeWindowsTaskNames(spec))
         }
         // A crashed helper can disappear from Wine's task table while its host
         // process is still alive. In that state use the pre-shutdown snapshot;
@@ -755,16 +1153,24 @@ final class OpenGameCore: @unchecked Sendable {
     // The Wine server, rather than the original loader PID, owns detached clients.
     // Only validated OpenGame prefixes are considered. Signal 0 probes the server
     // without starting one; clean session end respects WM_QUERYENDSESSION vetoes.
-    func shutdown(force:Bool=false,gracePeriod:TimeInterval=15) throws {
+    func shutdown(force:Bool=false,gracePeriod:TimeInterval=15,onlyBottleID:String?=nil) throws {
+        let library=try load()
+        var selectedPrefix:String?
+        if let onlyBottleID {
+            guard let b=library.bottles.first(where:{$0.id==onlyBottleID}) else{throw OGError.message("容器不存在。")}
+            selectedPrefix=try prefix(b).resolvingSymlinksInPath().path
+        }
         processLock.lock()
         acceptingLaunches=false
         do {try fm.createDirectory(at:root,withIntermediateDirectories:true);try String(getpid()).write(to:closingMarker,atomically:true,encoding:.utf8)}
         catch {processLock.unlock();throw error}
-        let savedSpecs=sessionSpecs,owned=children,helpers=watchers
+        let savedSpecs=sessionSpecs.filter{selectedPrefix == nil || $0.key==selectedPrefix}
+        let owned=children.filter{selectedPrefix == nil || $0.environment?["WINEPREFIX"]==selectedPrefix}
+        let helpers=watchers.filter{onlyBottleID == nil || $0.arguments?.last==onlyBottleID}
         for p in helpers where p.isRunning {Darwin.kill(p.processIdentifier,SIGTERM)}
         processLock.unlock()
         var targets=savedSpecs
-        for b in try load().bottles {
+        for b in library.bottles where onlyBottleID == nil || b.id==onlyBottleID {
             let folder=try prefix(b)
             guard fm.fileExists(atPath:folder.path),fm.isExecutableFile(atPath:runtime(b).path) else{continue}
             let key=folder.resolvingSymlinksInPath().path
@@ -836,7 +1242,7 @@ final class OpenGameCore: @unchecked Sendable {
     func createBottle(name: String, renderer: Renderer, engineFamily: EngineFamily = .foss) throws -> Bottle {
         let name=name.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !name.isEmpty else { throw OGError.message("请输入容器名称。") }
-        let id=UUID().uuidString.lowercased();let b=Bottle(id:id,name:name,directory:"Prefixes/\(id)",renderer:renderer,engineFamily:engineFamily)
+        let id=UUID().uuidString.lowercased();let b=Bottle(id:id,name:name,directory:"Prefixes/\(id)",renderer:renderer,engineFamily:engineFamily,steamMode:.compatibility)
         let dir=try prefix(b);try fm.createDirectory(at:dir,withIntermediateDirectories:true)
         do {
             _ = try prepareBundledFonts(b)
@@ -864,13 +1270,23 @@ final class OpenGameCore: @unchecked Sendable {
     }
     func updateBottle(_ bottle:Bottle) throws {
         guard !bottle.name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{throw OGError.message("请输入容器名称。")}
-        guard fm.isExecutableFile(atPath:runtime(bottle).path) else{throw OGError.message("此图形后端尚未安装。")}
-        if let existing=try load().bottles.first(where:{$0.id==bottle.id}), (existing.engineFamily ?? .winehq) != (bottle.engineFamily ?? .winehq) {
+        guard fm.isExecutableFile(atPath:runtime(bottle).path) else{throw OGError.message("此图形后端的完整运行库尚未安装。")}
+        guard let known=try load().bottles.first(where:{$0.id==bottle.id}),known.directory==bottle.directory else{throw OGError.message("容器不存在或路径已更改。")}
+        let folder=try prefix(bottle)
+        let configurationLock=Darwin.open(folder.appendingPathComponent(".opengame-configuration.lock").path,O_CREAT|O_RDWR,0o600)
+        guard configurationLock>=0 else{throw OGError.message("无法锁定容器设置。")}
+        defer{flock(configurationLock,LOCK_UN);Darwin.close(configurationLock)}
+        guard flock(configurationLock,LOCK_EX|LOCK_NB)==0 else{throw OGError.message("容器正在启动或更改设置，请稍后重试。")}
+        _ = try environment(bottle)
+        if let existing=try load().bottles.first(where:{$0.id==bottle.id}), ((existing.engineFamily ?? .winehq) != (bottle.engineFamily ?? .winehq) || existing.renderer != bottle.renderer || existing.usesMSync != bottle.usesMSync || existing.effectiveFrameRateLimit != bottle.effectiveFrameRateLimit || existing.dlssEnabled != bottle.dlssEnabled || existing.highResolution != bottle.highResolution || existing.effectiveSteamMode != bottle.effectiveSteamMode || existing.usesSteamOverlay != bottle.usesSteamOverlay) {
             let idle=Process();idle.executableURL=runtime(existing).deletingLastPathComponent().appendingPathComponent("wineserver");idle.arguments=["-w"];idle.environment=try environment(existing);idle.standardOutput=FileHandle.nullDevice;idle.standardError=FileHandle.nullDevice
             try idle.run()
             do { guard try wait(idle,timeout:2)==0 else { throw OGError.message("无法确认容器状态。") } }
-            catch { throw OGError.message("请先退出此容器的游戏、Steam 和 Wine 工具，再切换运行核心。") }
+            catch { throw OGError.message("请先退出此容器的游戏、Steam 和 Wine 工具，再更改运行核心、图形后端或性能设置。") }
         }
+        if bottle.effectiveSteamMode == .standard {try restoreSteamFiles(bottle)}
+        try ensureExtensionFiles(bottle)
+        if known.highResolution != bottle.highResolution {try applyHighResolution(bottle)}
         try mutate { lib in
             guard let i=lib.bottles.firstIndex(where:{$0.id==bottle.id}),lib.bottles[i].directory==bottle.directory else{throw OGError.message("容器不存在或路径已更改。")}
             lib.bottles[i]=bottle
@@ -886,7 +1302,7 @@ final class OpenGameCore: @unchecked Sendable {
         try idle.run()
         do{guard try wait(idle,timeout:8)==0 else{throw OGError.message("无法确认容器状态。")}}
         catch{throw OGError.message("请先退出此容器内的游戏、Steam 和 Wine 工具，稍后再复制。")}
-        let id=UUID().uuidString.lowercased();let copied=Bottle(id:id,name:label,directory:"Prefixes/\(id)",renderer:source.renderer,engineFamily:source.engineFamily)
+        let id=UUID().uuidString.lowercased();var copied=source;copied.id=id;copied.name=label;copied.directory="Prefixes/\(id)"
         let to=try prefix(copied)
         let operation=LaunchSpec(executable:URL(fileURLWithPath:"/bin/cp"),arguments:["-cR",from.path,to.path],directory:root,environment:ProcessInfo.processInfo.environment,log:path("Logs/copy-\(id).log"))
         let p=try start(operation)
@@ -967,7 +1383,7 @@ final class OpenGameCore: @unchecked Sendable {
         guard manifest.schema==1,fm.fileExists(atPath:temporary.appendingPathComponent("Prefix/system.reg").path) else{throw OGError.message("容器归档结构不完整。")}
         let id=UUID().uuidString.lowercased(),label=(name ?? manifest.bottle.name).trimmingCharacters(in:.whitespacesAndNewlines)
         guard !label.isEmpty else{throw OGError.message("请输入容器名称。")}
-        let restored=Bottle(id:id,name:label,directory:"Prefixes/\(id)",renderer:manifest.bottle.renderer,engineFamily:manifest.bottle.engineFamily)
+        var restored=manifest.bottle;restored.id=id;restored.name=label;restored.directory="Prefixes/\(id)"
         guard fm.isExecutableFile(atPath:runtime(restored).path) else{throw OGError.message("归档所需的运行核心尚未安装。")}
         let destination=try prefix(restored),source=temporary.appendingPathComponent("Prefix")
         let cp=Process();cp.executableURL=URL(fileURLWithPath:"/bin/cp");cp.arguments=["-cR",source.path,destination.path];cp.standardOutput=FileHandle.nullDevice;cp.standardError=FileHandle.nullDevice
@@ -1003,6 +1419,7 @@ final class OpenGameCore: @unchecked Sendable {
             guard !game.title.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { throw OGError.message("请输入游戏名称。") }
             var updated=game
             if lib.games[i].executable != game.executable {
+                updated.steamManaged=false;updated.steamInstallation=nil
                 let data=try Data(contentsOf:URL(fileURLWithPath:game.executable),options:.mappedIfSafe)
                 guard PEIcon.isExecutable(data) else { throw OGError.message("此文件不是支持的 Windows PE 可执行文件。") }
                 updated.icon=nil
@@ -1011,49 +1428,195 @@ final class OpenGameCore: @unchecked Sendable {
             lib.games[i]=updated
         }
     }
-    func removeGame(_ id: String) throws { try mutate { $0.games.removeAll(where:{$0.id==id}) } }
+    func removeGame(_ id: String) throws {
+        try mutate { library in
+            if let game=library.games.first(where:{$0.id==id}),let appID=game.steamID {
+                let key="steam-\(game.bottleID)-\(appID)"
+                if !(library.hiddenSteamGames ?? []).contains(key) {library.hiddenSteamGames=(library.hiddenSteamGames ?? [])+[key]}
+            }
+            library.games.removeAll(where:{$0.id==id})
+        }
+    }
     func installerSpec(file: URL,bottle: Bottle) throws -> LaunchSpec {
         guard ["exe","msi"].contains(file.pathExtension.lowercased()),fm.fileExists(atPath:file.path) else { throw OGError.message("请选择 EXE 或 MSI 安装程序。") }
         let args=file.pathExtension.lowercased()=="msi" ? ["msiexec","/i",file.path] : [file.path]
         return try spec(bottle:bottle,arguments:args,directory:file.deletingLastPathComponent(),logID:"installer-\(bottle.id)")
     }
     func toolSpec(bottle: Bottle,tool: String) throws -> LaunchSpec {
-        let tools:[String:[String]]=["winecfg":["winecfg"],"regedit":["regedit"],"taskmgr":["taskmgr"],"controllers":["control","joy.cpl"],"uninstall":["uninstaller"]]
+        if tool=="d3d12-probe" && effectiveRenderer(bottle) != .wine {throw OGError.message("DXMT 和 DXVK 不提供 DirectX 12。请先退出程序，把此容器的图形后端设为 Wine，再进行检测。")}
+        if tool=="graphics-probe" || tool=="dlss-probe" || tool=="d3d12-probe" {
+            let name=["graphics-probe":"OpenGameGraphicsProbe.exe","dlss-probe":"OpenGameDLSSProbe.exe","d3d12-probe":"OpenGameD3D12Probe.exe"][tool]!
+            let exe=path("bin/"+name)
+            guard fm.fileExists(atPath:exe.path) else{throw OGError.message("图形诊断组件未随应用提供，请使用完整构建。")}
+            return try spec(bottle:bottle,arguments:[exe.path],directory:prefix(bottle),logID:"diagnostics-"+tool+"-"+bottle.id)
+        }
+        let tools:[String:[String]]=["winecfg":["winecfg"],"regedit":["regedit"],"taskmgr":["taskmgr"],"controllers":["control","joy.cpl"],"uninstall":["uninstaller"],"internet":["control","inetcpl.cpl"],"reboot":["wineboot","-r"]]
         guard let args=tools[tool] else { throw OGError.message("未知的容器工具。") }
         return try spec(bottle:bottle,arguments:args,directory:prefix(bottle),logID:"tool-\(bottle.id)-\(tool)")
     }
-    func scanSteam(bottle: Bottle) throws -> Int {
+    private func steamValues(_ file:URL) throws -> [String:SteamKV] {
+        let size=try file.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0
+        guard size<=2*1024*1024 else{throw OGError.message("Steam 清单过大。")}
+        return try SteamKeyValues.parse(String(contentsOf:file,encoding:.utf8))
+    }
+    func steamLibraryURL(_ windowsPath:String,bottle:Bottle) throws -> URL? {
+        let normalized=windowsPath.replacingOccurrences(of:"\\",with:"/")
+        guard normalized.count>=3 else{return nil}
+        let chars=Array(normalized)
+        guard chars[1]==":",chars[2]=="/",let letter=String(chars[0]).lowercased().utf8.first,(97...122).contains(letter) else{return nil}
+        let relative=String(normalized.dropFirst(3))
+        guard !relative.components(separatedBy:"/").contains("..") else{return nil}
+        let drive=try prefix(bottle).appendingPathComponent("dosdevices/"+String(chars[0]).lowercased()+":")
+        guard fm.fileExists(atPath:drive.path) else{return nil}
+        let base=drive.resolvingSymlinksInPath(),target=drive.appendingPathComponent(relative).standardizedFileURL.resolvingSymlinksInPath()
+        guard base.path=="/" || target.path==base.path || target.path.hasPrefix(base.path+"/") else{return nil}
+        return target
+    }
+    func steamLibraryLocations(_ bottle:Bottle) throws -> (URL,[URL],[String]) {
         let steam=try prefix(bottle).appendingPathComponent("drive_c/Program Files (x86)/Steam")
-        let exe=steam.appendingPathComponent("steam.exe")
-        guard fm.fileExists(atPath:exe.path) else { throw OGError.message("此容器的默认路径下没有 Steam。可通过“运行安装程序”安装。") }
-        let apps=steam.appendingPathComponent("steamapps")
-        var found:[Game]=[]
-        for file in try fm.contentsOfDirectory(at:apps,includingPropertiesForKeys:nil) where file.lastPathComponent.hasPrefix("appmanifest_") && file.pathExtension=="acf" {
-            let text=try String(contentsOf:file,encoding:.utf8)
-            func value(_ key:String)->String? {
-                let p="\""+NSRegularExpression.escapedPattern(for:key)+"\"\\s+\"([^\"]*)\""
-                guard let r=try? NSRegularExpression(pattern:p),let m=r.firstMatch(in:text,range:NSRange(text.startIndex...,in:text)),let range=Range(m.range(at:1),in:text) else{return nil};return String(text[range])
-            }
-            guard let appid=value("appid"),!appid.isEmpty,appid.allSatisfy({$0.isNumber}),let name=value("name"),let install=value("installdir"),value("StateFlags")=="4" else { continue }
-            let folder=apps.appendingPathComponent("common").appendingPathComponent(install).standardizedFileURL
-            guard folder.path.hasPrefix(apps.appendingPathComponent("common").path+"/"),fm.fileExists(atPath:folder.path) else { continue }
-            let id="steam-\(bottle.id)-\(appid)";var icon:String?
-            let cache=steam.appendingPathComponent("appcache/librarycache/\(appid)")
-            if let files=try? fm.contentsOfDirectory(at:cache,includingPropertiesForKeys:nil) {
-                for f in files.sorted(by:{$0.lastPathComponent<$1.lastPathComponent}) where ["jpg","png"].contains(f.pathExtension) {
-                    if let image=NSImage(contentsOf:f),image.size.width==image.size.height,image.size.width<=256 {
-                        icon="Icons/\(id).\(f.pathExtension)";try fm.createDirectory(at:path("Icons"),withIntermediateDirectories:true);try Data(contentsOf:f).write(to:path(icon!),options:.atomic);break
-                    }
+        var libraries=[steam.resolvingSymlinksInPath()],warnings:[String]=[]
+        let folders=steam.appendingPathComponent("steamapps/libraryfolders.vdf")
+        if fm.fileExists(atPath:folders.path) {
+            do {
+                guard let values=try steamValues(folders)["libraryfolders"]?.object else{throw OGError.message("Steam 库目录清单缺少 libraryfolders。")}
+                for key in values.keys.sorted() where key.allSatisfy({$0.isASCII && $0.isNumber}) {
+                    guard libraries.count<64 else{warnings.append("Steam 库目录超过 64 个，后续目录未扫描。");break}
+                    let value=values[key]!,path=value.object?["path"]?.text ?? value.text
+                    guard let path else{continue}
+                    if let url=try steamLibraryURL(path,bottle:bottle) {libraries.append(url)}
+                    else {warnings.append("容器“\(bottle.name)”的库路径暂不可访问：\(path)")}
+                }
+            } catch {warnings.append("容器“\(bottle.name)”的库目录清单暂不可读；保留已有入口。")}
+        }
+        var seen=Set<String>();libraries=libraries.filter{seen.insert($0.path).inserted}
+        return (steam,libraries,warnings)
+    }
+    // Metadata only: never recurse through installed game payloads or start Wine.
+    func steamLibraryWatchPaths(_ bottles:[Bottle]) -> [URL] {
+        var paths:[URL]=[]
+        for bottle in bottles {
+            guard let (steam,libraries,_)=try? steamLibraryLocations(bottle) else{continue}
+            paths += [steam.deletingLastPathComponent(),steam,steam.appendingPathComponent("steamapps/libraryfolders.vdf")]
+            for library in libraries {
+                let apps=library.appendingPathComponent("steamapps");paths += [library,apps]
+                if let files=try? fm.contentsOfDirectory(at:apps,includingPropertiesForKeys:nil) {
+                    paths += files.filter{$0.lastPathComponent.hasPrefix("appmanifest_") && $0.pathExtension=="acf"}.sorted{$0.path<$1.path}.prefix(2048)
                 }
             }
-            found.append(Game(id:id,title:name,bottleID:bottle.id,executable:exe.path,arguments:["-applaunch",appid],workingDirectory:steam.path,icon:icon,steamID:appid,note:"Steam 已安装 · 待验证兼容性"))
         }
-        return try mutate { lib in
-            var count=0
-            for game in found where !lib.games.contains(where:{$0.bottleID==game.bottleID && $0.steamID==game.steamID}) { lib.games.append(game);count+=1 }
-            return count
+        var seen=Set<String>(),unique:[URL]=[]
+        for path in paths where seen.insert(path.resolvingSymlinksInPath().path).inserted {
+            unique.append(path);if unique.count>=8192 {break}
         }
+        return unique
     }
+    func steamLibraryFingerprint(_ bottles:[Bottle]) -> String {
+        steamLibraryWatchPaths(bottles).sorted{$0.path<$1.path}.map{url in
+            let values=try? url.resourceValues(forKeys:[.fileSizeKey,.contentModificationDateKey])
+            return url.path+"|\(values?.fileSize ?? -1)|\(values?.contentModificationDate?.timeIntervalSince1970 ?? -1)"
+        }.joined(separator:"\n")
+    }
+    private func steamArtwork(_ steam:URL,appID:String,id:String) throws -> String? {
+        let cache=steam.appendingPathComponent("appcache/librarycache/"+appID)
+        var level=[cache],candidates:[URL]=[]
+        for _ in 0..<3 {
+            var next:[URL]=[]
+            for folder in level.prefix(64) {
+                guard let files=try? fm.contentsOfDirectory(at:folder,includingPropertiesForKeys:[.isDirectoryKey,.fileSizeKey]) else{continue}
+                for file in files.prefix(256) {
+                    let values=try? file.resourceValues(forKeys:[.isDirectoryKey,.fileSizeKey])
+                    if values?.isDirectory==true {next.append(file)}
+                    else if ["jpg","jpeg","png","ico"].contains(file.pathExtension.lowercased()),(values?.fileSize ?? Int.max)<5*1024*1024 {candidates.append(file)}
+                }
+            }
+            level=next
+        }
+        let chosen=candidates.sorted{a,b in
+            func rank(_ p:URL)->Int {let name=p.lastPathComponent.lowercased();return name.contains("icon") ? 0 : name.contains("library_600x900") ? 1 : name.contains("header") ? 2 : 3}
+            let ra=rank(a),rb=rank(b);return ra==rb ? a.path<b.path : ra<rb
+        }.first{NSImage(contentsOf:$0) != nil}
+        guard let chosen else{return nil}
+        let icon="Icons/\(id).\(chosen.pathExtension.lowercased())"
+        try fm.createDirectory(at:path("Icons"),withIntermediateDirectories:true)
+        let data=try Data(contentsOf:chosen)
+        if (try? Data(contentsOf:path(icon))) != data {try data.write(to:path(icon),options:.atomic)}
+        return icon
+    }
+    private func isManagedSteamGame(_ game:Game) -> Bool {
+        if let managed=game.steamManaged{return managed}
+        guard let appID=game.steamID else{return false}
+        return game.id=="steam-\(game.bottleID)-\(appID)" && URL(fileURLWithPath:game.executable).lastPathComponent.lowercased()=="steam.exe"
+    }
+    func refreshSteamLibrary(bottles:[Bottle]?=nil) throws -> SteamScanResult {
+        let initial=try load(),bottles=bottles ?? initial.bottles
+        var result=SteamScanResult(),found:[String:Game]=[:],listed=Set<String>(),seen=Set<String>()
+        for bottle in bottles {
+            let (steam,libraries,warnings)=try steamLibraryLocations(bottle);result.warnings += warnings
+            let exe=steam.appendingPathComponent("steam.exe")
+            for library in libraries {
+                let apps=library.appendingPathComponent("steamapps")
+                guard let files=try? fm.contentsOfDirectory(at:apps,includingPropertiesForKeys:[.contentModificationDateKey]) else{continue}
+                listed.insert(bottle.id+"|"+apps.resolvingSymlinksInPath().path)
+                let manifests=files.filter{$0.lastPathComponent.hasPrefix("appmanifest_") && $0.pathExtension=="acf"}.sorted{$0.path<$1.path}
+                if manifests.count>2048 {result.warnings.append("容器“\(bottle.name)”超过 2048 份清单，后续未扫描。")}
+                for file in manifests.prefix(2048) {
+                    let filenameID=String(file.deletingPathExtension().lastPathComponent.dropFirst("appmanifest_".count))
+                    let id="steam-\(bottle.id)-\(filenameID)";seen.insert(id)
+                    do {
+                        guard let app=try steamValues(file)["appstate"]?.object,
+                              let appID=app["appid"]?.text,appID==filenameID,!appID.isEmpty,appID.allSatisfy({$0.isASCII && $0.isNumber}),
+                              let name=app["name"]?.text,!name.isEmpty,let install=app["installdir"]?.text,!install.isEmpty,
+                              let flags=app["stateflags"]?.text.flatMap(UInt64.init) else{throw OGError.message("Steam 游戏清单字段缺失。")}
+                        let common=apps.appendingPathComponent("common").resolvingSymlinksInPath(),folder=common.appendingPathComponent(install).standardizedFileURL.resolvingSymlinksInPath()
+                        guard folder.path.hasPrefix(common.path+"/"),!install.contains("\\"),!install.components(separatedBy:"/").contains("..") else{throw OGError.message("Steam 安装目录不安全。")}
+                        let downloaded=app["bytesdownloaded"]?.text.flatMap(UInt64.init) ?? 0,total=app["bytestodownload"]?.text.flatMap(UInt64.init) ?? 0
+                        let staged=app["bytesstaged"]?.text.flatMap(UInt64.init) ?? 0,toStage=app["bytestostage"]?.text.flatMap(UInt64.init) ?? 0
+                        let folderExists=(try? folder.resourceValues(forKeys:[.isDirectoryKey]).isDirectory)==true
+                        let downloading=total>downloaded,staging=toStage>staged
+                        let state:SteamInstallState
+                        if (app["updateresult"]?.text.flatMap(Int.init) ?? 0) != 0 && (downloading || flags&4==0) {state = .failed}
+                        else if downloading || staging {state = flags&4 != 0 ? .updating : .downloading}
+                        else if flags&4 != 0 && folderExists {state = .installed}
+                        else if !folderExists && flags&4 != 0 {state = .notInstalled}
+                        else {state = .downloading}
+                        var info=SteamInstallation(library:library.path,directory:folder.path,manifest:file.path,state:state,buildID:app["buildid"]?.text,downloaded:downloaded,total:total)
+                        if !fm.fileExists(atPath:exe.path) {info.state = .unavailable}
+                        if let existing=found[id],existing.steamInstallation?.state == .installed && state != .installed {continue}
+                        let icon=try steamArtwork(steam,appID:appID,id:id)
+                        found[id]=Game(id:id,title:name,bottleID:bottle.id,executable:exe.path,arguments:["-applaunch",appID],workingDirectory:steam.path,icon:icon,steamID:appID,note:"Steam · 兼容性需实际验证",steamInstallation:info,steamManaged:true)
+                    } catch {result.warnings.append("\(file.lastPathComponent) 暂不可读；已有入口保持不变。")}
+                }
+            }
+        }
+        let bottleIDs=Set(bottles.map{$0.id})
+        func reconcile(_ library:inout Library) -> (Int,Int) {
+            var added=0,updated=0
+            for i in library.games.indices where bottleIDs.contains(library.games[i].bottleID) && isManagedSteamGame(library.games[i]) {
+                let old=library.games[i];guard let appID=old.steamID else{continue}
+                let key="steam-\(old.bottleID)-\(appID)"
+                if let current=found[key] {
+                    library.games[i].steamManaged=true;library.games[i].steamInstallation=current.steamInstallation
+                    if library.games[i].icon==nil {library.games[i].icon=current.icon}
+                } else if !seen.contains(key),var info=old.steamInstallation {
+                    info.state=listed.contains(old.bottleID+"|"+URL(fileURLWithPath:info.manifest).deletingLastPathComponent().resolvingSymlinksInPath().path) ? .notInstalled : .unavailable
+                    library.games[i].steamInstallation=info
+                }
+                if old != library.games[i] {updated+=1}
+            }
+            let hidden=Set(library.hiddenSteamGames ?? [])
+            for game in found.values.sorted(by:{$0.title.localizedStandardCompare($1.title) == .orderedAscending}) where !hidden.contains(game.id) && !library.games.contains(where:{$0.bottleID==game.bottleID && $0.steamID==game.steamID}) {
+                library.games.append(game);added+=1
+            }
+            return (added,updated)
+        }
+        var preview=initial;let delta=reconcile(&preview)
+        if delta.0>0 || delta.1>0 {
+            let actual=try mutate{library in reconcile(&library)};result.added=actual.0;result.updated=actual.1
+        }
+        result.watchPaths=steamLibraryWatchPaths(bottles);return result
+    }
+    func scanSteam(bottle:Bottle) throws -> Int {try refreshSteamLibrary(bottles:[bottle]).added}
+
 }
 
 // Resource-only PE parser: never executes the file and checks every offset before reading.

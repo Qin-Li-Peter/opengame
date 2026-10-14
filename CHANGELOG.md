@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.8（开发中，未发布）
+
+- Steam 安装改为静默安装；安装器使用 Wine 界面环境并启用更新兼容监控，完成后统一配置和启动 Steam。
+- 修复 Wine NT 目录枚举跨 ABI 的 BOOLEAN 高位问题，避免 Steam 重复枚举首条目导致 Wine server 持续高 CPU；CEF 仍有明显负载，游戏性能尚未验证。
+- Steam 启动前兼容准备覆盖 cef.win64 与 cef.win7x64；保留官方备份，不覆盖不同的游戏模组 DLL。
+- 高级设置按 CrossOver 的图形、DLSS、MSync、高分辨率分组；D3DMetal 仍不可选，独立核心尚未实现。
+- Steam 保留兼容模式为默认，标准模式作为实验选项；恢复仅使用本容器的官方备份，新增覆盖层选项与详细日志。
+- Steam 原生进程判断按运行核心和容器隔离，登录检查仅读取日志尾部，冷启动排除旧会话登录记录。
+- 可选接入匹配 DXMT 0.80 的开源 NVAPI/NGX 到 MetalFX 转换，已测模块初始化；真实 DLSS 输出与游戏尚未验收。
+- 图形诊断扩展到 feature level、资源视图、MSAA 和线程能力，并提供图形与 DLSS 诊断入口。
+- 图形/显示/Steam 设置在运行中禁止切换，复制和归档保留所有选项；缺失 DXMT 核心明确失败。
+
+
 ## 0.5.7
 
 - 后台进程查询加入覆盖输出收集的超时，避免 Wine 子进程持有输出管道时阻塞退出。
@@ -66,3 +79,11 @@
 - 通过 Wine 会话结束消息给游戏保存和拒绝退出的机会；失败时提供重试、取消和明确的强制退出选项。
 - 自动清理 Steam 正常退出后残留的 CEF 和错误报告辅助进程，同时保留真正拒绝退出的游戏进程。
 - 新增独立容器、拒绝退出、强制退出、跨容器隔离和真实 Wine 脱离子进程测试。
+
+### Steam library and release integration
+
+- Automatically discover installed Steam games across mapped libraries; refresh and status controls preserve custom entries and arguments.
+- Recover an official Steam updater shutdown once, reuse existing clients, and link installed host CJK fonts without redistributing them.
+- Normalize Wine directory BOOLEAN arguments in both FOSS cores; retain the Darwin IP_RECVTOS fix.
+- Require macOS 26.0 for this runtime build; earlier systems are not supported by this package.
+- Quit notice explicitly explains that exiting OpenGame closes its games and Steam.

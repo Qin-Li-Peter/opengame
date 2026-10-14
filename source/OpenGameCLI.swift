@@ -27,6 +27,28 @@ import Foundation
    case "install-recipe":
     guard args.count==3,let recipe=try core.availableRecipes().first(where:{$0.id==args[2]}) else{throw OGError.message("install-recipe BOTTLE_ID RECIPE_ID")}
     try core.installRecipe(recipe,in:bottle(args[1])){print($0)};print("installed")
+   case "stop":
+    guard args.count==2 || (args.count==3 && args[2]=="--force") else{throw OGError.message("stop BOTTLE_ID [--force]")}
+    defer{core.resumeLaunches()}
+    try core.shutdown(force:args.contains("--force"),onlyBottleID:try bottle(args[1]).id);print("Bottle applications stopped")
+   case "settings":
+    guard args.count>=4,args.count%2==0 else{throw OGError.message("settings BOTTLE_ID OPTION VALUE [OPTION VALUE ...]")}
+    var b=try bottle(args[1])
+    func flag(_ value:String)throws->Bool {guard value=="on" || value=="off" else{throw OGError.message("开关值必须为 on 或 off。")};return value=="on"}
+    for i in stride(from:2,to:args.count,by:2) {
+        let value=args[i+1]
+        switch args[i] {
+        case "msync":b.msyncEnabled=try flag(value)
+        case "dlss":b.dlssEnabled=try flag(value)
+        case "high-resolution":b.highResolution=try flag(value)
+        case "overlay":b.steamOverlayEnabled=try flag(value)
+        case "diagnostics":b.diagnosticsEnabled=try flag(value)
+        case "frame-limit":guard let rate=Int(value) else{throw OGError.message("帧率上限必须为整数。")};b.frameRateLimit=rate
+        case "steam-mode":guard let mode=SteamMode(rawValue:value) else{throw OGError.message("Steam 模式必须为 standard 或 compatibility。")};b.steamMode=mode
+        default:throw OGError.message("未知的容器选项：\(args[i])")
+        }
+    }
+    try core.updateBottle(b);print("Settings saved; restart games to apply")
    case "renderer":
     guard args.count==3,let renderer=Renderer(rawValue:args[2]) else{throw OGError.message("renderer BOTTLE_ID wine|dxvk|dxmt")}
     var b=try bottle(args[1]);b.renderer=renderer;try core.updateBottle(b);print(renderer.rawValue)
@@ -42,7 +64,7 @@ import Foundation
     let spec=try core.gameSpec(game)
     if args[0]=="describe" {print(spec.executable.path);print(spec.environment["WINEPREFIX"] ?? "");print(spec.arguments);return}
     let p=try core.start(spec);print("PID=\(p.processIdentifier) LOG=\(spec.log.path)")
-    if args.contains("--wait") {exit(try core.wait(p))}
+    if args.contains("--wait") {p.waitUntilExit();exit(p.terminationStatus)}
    case "probe":
     guard args.count==3 else{throw OGError.message("probe BOTTLE_ID TEST_EXE")}
     let b=try bottle(args[1]),file=URL(fileURLWithPath:args[2]);let s=try core.spec(bottle:b,arguments:[file.path],directory:file.deletingLastPathComponent(),logID:"probe-\(b.id)-\(file.lastPathComponent)")
@@ -54,6 +76,9 @@ import Foundation
     let b=try bottle(args.count>1 ? args[1] : "steam")
     let file=try core.prefix(b).appendingPathComponent("drive_c/Program Files (x86)/Steam/steam.exe")
     guard FileManager.default.fileExists(atPath:file.path) else{throw OGError.message("此容器未安装 Steam。")}
+    let entry=Game(id:"steam-"+b.id,title:"Steam",bottleID:b.id,executable:file.path,arguments:[],workingDirectory:file.deletingLastPathComponent().path,icon:nil,steamID:nil,note:"")
+    if let status=try core.nativeRunningGameStatus(entry){print(status);return}
+    try core.prepareSteamLaunchFiles(b)
     let p=try core.start(core.spec(bottle:b,arguments:[file.path],directory:file.deletingLastPathComponent(),logID:"steam-\(b.id)"));print("PID=\(p.processIdentifier)")
    case "exec":
     guard args.count>=3 else{throw OGError.message("exec BOTTLE_ID WINE_COMMAND [ARG ...]")}

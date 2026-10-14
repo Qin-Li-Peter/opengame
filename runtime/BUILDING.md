@@ -14,7 +14,7 @@ For the distributable playback runtime, expand the official runtime package and 
 
 ## Local Wine patches
 
-Apply `scripts/apply-wine-patches.sh WINE_SOURCE_DIRECTORY` before building either core. The historical build recipe now includes this step. Version 0.5.5 requires `runtime/patches/darwin-ip-recvtos.patch`; prebuilt runtimes from older releases do not contain the fix. Compile and run `tests/diagnostics/udp-tos.c` against every staged core before packaging. See `docs/STEAM-NETWORK-FREEZE.md` for the failure and validation.
+Apply `scripts/apply-wine-patches.sh WINE_SOURCE_DIRECTORY` before building either core. The historical build recipe now includes this step. Version 0.5.5 requires `runtime/patches/darwin-ip-recvtos.patch`; 0.5.8 additionally requires `ntdirectory-boolean-abi.patch` to normalize one-byte Windows BOOLEAN arguments across the Unix syscall bridge; prebuilt runtimes from older releases do not contain the fix. Compile and run `tests/diagnostics/udp-tos.c` against every staged core before packaging. See `docs/STEAM-NETWORK-FREEZE.md` for the failure and validation.
 
 ## Full package
 
@@ -26,3 +26,5 @@ scripts/package-full.sh /path/to/audited-runtime-root
 The command audits symlinks, user data, absolute Mach-O dependencies, and renderer pack completeness. It creates a full app archive and a separate corresponding-source archive in `dist/`.
 
 For Developer ID distribution, set `OG_CODESIGN_IDENTITY`, package, and then submit the ZIP with `scripts/notarize.sh`. Notarization requires the repository owner's Apple Developer credentials and cannot be completed by source code alone.
+
+For the BOOLEAN regression, run `python3 scripts/test-ntdirectory-boolean.py /path/to/OpenGame.app --engine WineFOSS11-DXMT`. It creates an isolated prefix, retains numeric results, limits each call and host process, and stops only that independent Wine server. See `docs/STEAM-CPU-ENUMERATION.md`. Pin the SDK used by the tested runtime: macOS 26.5 SDK. The default macOS 27 SDK incorrectly enabled `pipe2` for this macOS 26.6 host and caused an initialization crash; do not stage that candidate. Runtime Mach-O minimum OS requirements must also be audited; launcher deployment settings alone do not establish runtime support.

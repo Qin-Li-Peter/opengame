@@ -19,3 +19,15 @@ OpenGame 优先使用 APP 内核心。开发版没有内置核心时，回退到
 打包过程先运行 `relocate-runtime.py`，把构建目录和 `/opt/local` RPATH 改为 `@loader_path` 或 `@executable_path`，随后由 `audit-runtime.py` 拒绝绝对依赖、逃逸符号链接及私人运行状态。当前核心来自 CodeWeavers 26.3.0 公布的 FOSS 源码；归档哈希、构建开关和已测状态见 `provenance.json` 与 `runtime/BUILDING.md`。
 
 Wine 已针对同包的 GStreamer 1.28.1 重新编译。完整包包含 `winegstreamer.so`、x86_64/i386 `winegstreamer.dll` 和经过白名单筛选的播放插件；GPL、受限专利、DVD、Python、GTK、采集、编辑和开发组件不会进入分发包。打包审计会拒绝缺少桥接模块的运行时。全新安装测试会用 OpenH264 生成测试流、经 Apple VideoToolbox 解码，并从 64 位和 32 位 Windows 探针加载 `winegstreamer.dll`。这证明 H.264 硬件解码路径和 Wine 桥接可装载，但尚未覆盖每种编码格式或真实游戏过场。Wine/VKD3D 的 x64 `D3D12CreateDevice` 探针已返回 `S_OK`，但尚未通过真实 DX12 游戏验收，不能视为与 D3DMetal 等效。
+
+## 可选 DXMT 扩展（0.5.8 开发版）
+
+从 3Shain/dxmt 的 v0.80 Release 获取 `dxmt-v0.80-builtin.tar.gz`，执行：
+
+```sh
+python3 scripts/stage-dxmt-extensions.py ARCHIVE RUNTIME_ROOT
+```
+
+脚本核对固定 SHA-256 和运行时 DXMT 版本，只提取两个指定常规文件，写入 `Extensions/dxmt/x86_64-windows/{nvapi64.dll,nvngx.dll}`。`embed-runtime.sh` 会保留此目录；缺少任一有效 PE 模块时 UI 不启用 DLSS。开关通过 `DXMT_ENABLE_NVEXT` 与隔离的 `WINEDLLPATH` 生效，Steam 子游戏继承配置；关闭时仅恢复被 OpenGame 管理且仍匹配的 DLL。
+
+这些模块是 DXMT 的公开 NGX/NVAPI 到 MetalFX 实现，不是从 CrossOver 复制的运行组件。保留 DXMT MIT 与 NVIDIA NVAPI MIT 通知。当前只验收 API 初始化，真实超分辨率输出和游戏性能尚未验收。

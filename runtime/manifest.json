@@ -2,7 +2,7 @@
   "schema": 1,
   "runtime": "Wine FOSS 11.0 / CodeWeavers 26.3.0 source",
   "architecture": "x86_64-on-Apple-Silicon",
-  "minimum_macos": "14.0",
+  "minimum_macos": "26.0",
   "components": {
     "wine": "11.0 with MSync base runtime",
     "dxmt": "0.80 with its matching complete Wine/Unix runtime",
@@ -34,6 +34,10 @@
     "GStreamer GPL/restricted/DVD plugins"
   ],
   "wine_patches": [
-    "darwin-ip-recvtos"
-  ]
+    "darwin-ip-recvtos",
+    "ntdirectory-boolean-abi"
+  ],
+  "optional_components": {
+    "dxmt_extensions": "DXMT 0.80 NVAPI/NGX to MetalFX, D3D11 x64; enabled only when modules are present"
+  }
 }

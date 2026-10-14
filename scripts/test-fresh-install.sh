@@ -21,7 +21,18 @@ if "$gst/bin/gst-inspect-1.0" x264enc >/dev/null 2>&1; then
 fi
 
 test_home=$(mktemp -d)
-trap 'rm -rf "$test_home"' EXIT
+cleanup() {
+  if test -n "${OG_TEST_EVIDENCE:-}" && test -d "$test_home/OpenGame/Logs"; then
+    mkdir -p "$OG_TEST_EVIDENCE"
+    cp -R "$test_home/OpenGame/Logs" "$OG_TEST_EVIDENCE/"
+  fi
+  for test_id in "${id:-}" "${wine_id:-}"; do
+    test -n "$test_id" || continue
+    OPENGAME_ROOT="$root" "$cli" stop "$test_id" --force >/dev/null 2>&1 || true
+  done
+  rm -rf "$test_home"
+}
+trap cleanup EXIT
 root="$test_home/OpenGame"
 status=$(OPENGAME_ROOT="$root" "$cli" runtime-status)
 case "$status" in *"OpenGame.app"*"DXMT / DXVK"*) ;; *) echo "Unexpected runtime status: $status" >&2; exit 1;; esac
@@ -32,8 +43,9 @@ test "$(find "$prefix/drive_c/windows/Fonts" -name 'Liberation*.ttf' | wc -l | t
 OPENGAME_ROOT="$root" "$cli" recipes | grep -q '^steam'
 if test -n "${OG_MINGW_CC:-}"; then
   "$OG_MINGW_CC" docs/d3d12.c -O2 -Wall -Wextra -Werror -ld3d12 -ldxgi -o "$test_home/d3d12-smoke.exe"
-  OPENGAME_ROOT="$root" "$cli" probe "$id" "$test_home/d3d12-smoke.exe"
-  grep -q 'D3D12_CREATE_DEVICE=00000000' "$root/Logs/probe-$id-d3d12-smoke.exe.log"
+  wine_id=$(OPENGAME_ROOT="$root" "$cli" create "D3D12 Wine Test" wine foss)
+  OPENGAME_ROOT="$root" "$cli" probe "$wine_id" "$test_home/d3d12-smoke.exe"
+  grep -q 'D3D12_CREATE_DEVICE=00000000' "$root/Logs/probe-$wine_id-d3d12-smoke.exe.log"
   "$OG_MINGW_CC" docs/winegstreamer-smoke.c -O2 -Wall -Wextra -Werror -o "$test_home/winegstreamer-smoke64.exe"
   OPENGAME_ROOT="$root" "$cli" probe "$id" "$test_home/winegstreamer-smoke64.exe"
   grep -q 'WINEGSTREAMER_LOAD=OK' "$root/Logs/probe-$id-winegstreamer-smoke64.exe.log"

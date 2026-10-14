@@ -80,9 +80,26 @@
     "sha256": "8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d",
     "verified_against_publisher_metadata": true,
     "license": "MIT for v0.80",
-    "excluded_modules": [
+    "optional_modules": [
       "nvapi64.dll",
       "nvngx.dll"
-    ]
+    ],
+    "optional_modules_scope": "D3D11 x64 NGX/NVAPI to MetalFX; stage verified archive with scripts/stage-dxmt-extensions.py"
+  },
+  {
+    "kind": "source",
+    "file": "wine-mono-10.4.1-src.tar.xz",
+    "url": "https://github.com/wine-mono/wine-mono/releases/download/wine-mono-10.4.1/wine-mono-10.4.1-src.tar.xz",
+    "sha256": "128e335396689e466dff5e1aa0770a714dbe3d16397fc4ddbb8a80999c67323b",
+    "license": "component-specific; see corresponding source licenses",
+    "verification": "GitHub publisher digest"
+  },
+  {
+    "kind": "source",
+    "file": "wine-gecko-2.47.4-src.tar.xz",
+    "url": "https://dl.winehq.org/wine/wine-gecko/2.47.4/wine-gecko-2.47.4-src.tar.xz",
+    "sha256": "bf31b6619570ce289f07298bdd670081635cd12104010050f06c16e44ccd153f",
+    "license": "component-specific; see corresponding source licenses",
+    "verification": "official WineHQ HTTPS archive; local SHA-256 pin"
   }
 ]

@@ -45,3 +45,5 @@ scripts/package-full.sh /path/to/audited-runtime-root
 - [Steam 网络冻结诊断](STEAM-NETWORK-FREEZE.md)
 
 CLI 位于应用包 `Contents/MacOS/OpenGameCLI`。用户数据默认位于 `~/Library/Application Support/OpenGame`；隔离测试使用 `OPENGAME_ROOT`，不要使用真实账号容器进行清理测试。
+
+本机 SDK 27 的 SwiftUI State 宏插件在当前 Command Line Tools 中不可用；本轮启动器使用 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk scripts/build.sh` 与 Swift 6.4 构建。Swift 模块缓存放在 `build/module-cache`，避免受限执行环境写入用户全局缓存失败。Wine BOOLEAN 候选同样明确使用 SDK 26.5；不要把默认新 SDK 的 feature 探测结果直接用于旧系统运行库。

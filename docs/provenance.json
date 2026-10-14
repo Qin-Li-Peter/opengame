@@ -4,13 +4,24 @@
   "wine": "11.0",
   "msync": true,
   "tls_test": "HTTPS 200",
-  "d3d12_device_test": "D3D12CreateDevice x64 returned S_OK",
+  "d3d12_device_test": "Wine backend: device, queue, clear, barrier, copy, fence and RGBA readback passed; DXMT is not a D3D12 backend",
   "gstreamer_compiled": true,
   "gstreamer": "1.28.1; winegstreamer x86_64 Unix and x86_64/i386 Windows modules built",
   "video_test": "OpenH264 encode/parse plus Apple VideoToolbox decode pipeline and 64/32-bit winegstreamer LoadLibrary probes returned success",
-  "status": "experimental; Steam login and How to Fish menu/input confirmed by user; full compatibility not established",
+  "status": "experimental; Steam login/download confirmed; native library launch verified; user reports How to Fish save gameplay and built-in speaker audio; full compatibility not established",
   "opengame_wine_patches": [
-    "darwin-ip-recvtos"
+    "darwin-ip-recvtos",
+    "ntdirectory-boolean-abi"
   ],
-  "udp_tos_test": "Base and DXMT cores: WSARecvMsg TOS 0xB8 passed; How to Fish menu and input confirmed by user"
+  "udp_tos_test": "Base and DXMT cores: WSARecvMsg TOS 0xB8 passed; How to Fish menu and input confirmed by user",
+  "optional_dxmt_extensions": {
+    "source": "3Shain/dxmt v0.80 official builtin archive",
+    "sha256": "8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d",
+    "modules": [
+      "nvapi64.dll",
+      "nvngx.dll"
+    ],
+    "test": "NVAPI Initialize, NGX Init and capability parameter allocation passed; real DLSS rendering unverified"
+  },
+  "ntdirectory_boolean_test": "SDK 26.5 source-built ntdll: canonical and Steam raw BOOLEAN patterns advance and terminate in both FOSS cores; isolated UDP TOS b8 and thread/mutex/event/semaphore passed. Actual 75-second client check: wineserver 0.7-1.0% CPU; CEF 37-39% remains. Game play and performance parity unverified."
 }

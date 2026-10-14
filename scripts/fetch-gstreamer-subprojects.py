@@ -50,24 +50,24 @@ for filename, item in sorted(items.items()):
     target = destination / filename
     expected = item["sha256"]
     if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() == expected:
-        print(expected, target)
+        print(expected, target, flush=True)
         continue
     errors = []
-    urls = [url for url in (item["url"], item.get("fallback_url")) if url]
+    urls = [url for url in (item.get("fallback_url"), item["url"]) if url]
     for attempt in range(3):
         url = urls[attempt % len(urls)]
         if not url:
             continue
         partial = destination / (filename + ".partial")
         try:
-            with opener.open(url, timeout=90) as response, partial.open("wb") as output:
+            with opener.open(url, timeout=30) as response, partial.open("wb") as output:
                 while chunk := response.read(1024 * 1024):
                     output.write(chunk)
             actual = hashlib.sha256(partial.read_bytes()).hexdigest()
             if actual != expected:
                 raise ValueError(f"hash {actual}")
             partial.replace(target)
-            print(expected, target)
+            print(expected, target, flush=True)
             break
         except Exception as error:
             errors.append(f"{url}: {error}")
